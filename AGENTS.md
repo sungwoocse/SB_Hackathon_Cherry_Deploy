@@ -36,6 +36,7 @@
 - FastAPI 기본값은 **실제 배포** 수행 (`DEPLOY_DRY_RUN=false`). 드라이런이 필요하면 환경변수 `DEPLOY_DRY_RUN=true`로 PM2를 재시작하세요.
 - Repo1(SB_Hackathon_Cherry_Chatbot) 기본 배포 브랜치는 `deploy` (옵션으로 `main`). Deploy 레포의 `upload` 브랜치는 백엔드 작업용으로만 사용합니다.
 - 롤백 API: `/api/v1/rollback` → 최근 두 번의 성공 배포 commit 기준으로 <code>git fetch → checkout -B → reset --hard → clean -fdx → npm run build</code>를 수행. 실제 모드에서는 <code>git push origin +commit:branch</code>까지 실행해 원격 브랜치도 되돌립니다.
+  (임시) 테스트 편의를 위해 성공 기록 2건 제한은 주석 처리되어 있습니다. 운영 시 재활성화 요망.
 
 ## 5. 향후 TODO 힌트
 - 정적 프론트엔드 build 결과물을 Nginx로 서빙하려면 `location /` 블록 수정

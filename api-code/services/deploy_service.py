@@ -69,7 +69,9 @@ class DeployService:
 
         recent = await self.repository.get_recent_successes(branch=branch, limit=2)
         if len(recent) < 2:
-            raise RuntimeError("Not enough successful deployments to rollback.")
+            error = "Not enough successful deployments to rollback."
+            logger.warning(error)
+            raise RuntimeError(error)
 
         current, target = recent[0], recent[1]
         current_commit = (
