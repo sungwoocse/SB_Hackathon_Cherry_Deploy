@@ -98,6 +98,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeployPreviewResponse'
+  /api/v1/rollback:
+    post:
+      summary: Roll back to the previous successful deployment commit
+      tags: [deploy]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '202':
+          description: Rollback accepted; background task scheduled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+        '400':
+          description: Invalid rollback request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Not enough history to perform rollback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /healthz:
     get:
       summary: Liveness probe
@@ -191,6 +220,13 @@ components:
         cost_estimate:
           type: object
           additionalProperties: true
+    RollbackRequest:
+      type: object
+      properties:
+        branch:
+          type: string
+          description: Optional override for repo1 branch (defaults to deploy).
+          example: deploy
     DeployStatusEnum:
       type: string
       enum:

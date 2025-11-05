@@ -99,6 +99,9 @@
     <p style="margin: 0 0 15px 0;">
         A: 우리가 만드는 버튼이 아니라, <strong>GitHub Actions의 <code>workflow_dispatch</code> 기능</strong>입니다. <code>.yml</code> 파일에 두 줄만 추가하면 "Actions" 탭에 <strong>"Run workflow" 버튼</strong>이 자동으로 생깁니다. 데모 시연 시 <code>push</code> 없이 이 버튼을 클릭해 배포를 시작합니다.
     </p>
+    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 롤백은 어떻게 동작하나요?</h4>
+    <p style="margin: 0 0 15px 0;">
+        A: <code>POST /api/v1/rollback</code>을 호출하면 최근 성공 배포 두 건을 확인해 최신 commit에서 바로 이전 commit으로 되돌립니다. 내부적으로 <code>git fetch</code>, <code>git checkout -B ... to_commit</code>, <code>git reset --hard</code>, <code>git clean -fdx</code>, <code>npm run build</code> 순으로 실행하며, 실제 모드에서는 <code>git push origin +to_commit:branch</code>로 원격도 강제로 되돌립니다. 성공 기록이 2건 미만이면 409로 거절됩니다.</p>
 
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 백엔드 <code>/api/v1/deploy</code> 호출 시 어떤 입력이 필요한가요?</h4>
     <p style="margin: 0 0 15px 0;">

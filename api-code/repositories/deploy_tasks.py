@@ -77,3 +77,17 @@ class DeployTaskRepository:
         if not document:
             return None
         return DeployReport.from_mongo(document)
+
+    async def get_recent_successes(self, branch: str, limit: int = 2) -> list[DeployTask]:
+        cursor = (
+            self._tasks.find(
+                {
+                    "status": DeployStatus.COMPLETED.value,
+                    "metadata.branch": branch,
+                }
+            )
+            .sort("completed_at", -1)
+            .limit(limit)
+        )
+        documents = await cursor.to_list(length=limit)
+        return [DeployTask.from_mongo(doc) for doc in documents]

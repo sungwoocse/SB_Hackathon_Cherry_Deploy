@@ -4,6 +4,7 @@ from .deploy import (
     DeployRequest,
     DeployResponse,
     DeployStatusResponse,
+    RollbackRequest,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "DeployRequest",
     "DeployResponse",
     "DeployStatusResponse",
+    "RollbackRequest",
 ]

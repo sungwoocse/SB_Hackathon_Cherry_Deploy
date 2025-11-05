@@ -40,3 +40,11 @@ class DeployPreviewResponse(BaseModel):
     commands: list[str] = Field(..., description="Ordered commands executed during deploy.")
     risk_assessment: Dict[str, Any] = Field(..., description="Plain-language risk summary.")
     cost_estimate: Dict[str, Any] = Field(..., description="Rough execution cost/time details.")
+
+
+class RollbackRequest(BaseModel):
+    branch: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Optional branch override to roll back (defaults to deploy).",
+    )

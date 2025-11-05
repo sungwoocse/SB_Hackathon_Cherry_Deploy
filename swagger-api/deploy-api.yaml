@@ -60,6 +60,13 @@ components:
           type: string
           minLength: 1
           description: Optional override for Repo1 branch (defaults to `deploy`).
+    RollbackRequest:
+      type: object
+      properties:
+        branch:
+          type: string
+          minLength: 1
+          description: Optional override for Repo1 branch (defaults to `deploy`).
     DeployResponse:
       type: object
       required:
@@ -88,3 +95,35 @@ components:
         detail:
           type: string
           description: Error message for operators.
+  /api/v1/rollback:
+    post:
+      summary: Roll back to the previous successful deployment commit
+      operationId: triggerRollback
+      tags:
+        - deploy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        "202":
+          description: Rollback accepted; background task scheduled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+        "400":
+          description: Invalid rollback request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Not enough history to perform rollback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []

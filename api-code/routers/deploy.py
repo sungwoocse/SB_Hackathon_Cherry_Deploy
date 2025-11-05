@@ -3,7 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from domain import DeployStatus
-from schemas import DeployPreviewResponse, DeployRequest, DeployResponse, DeployStatusResponse
+from schemas import (
+    DeployPreviewResponse,
+    DeployRequest,
+    DeployResponse,
+    DeployStatusResponse,
+    RollbackRequest,
+)
 from services import DeployService
 
 
@@ -66,5 +72,31 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
     async def preview() -> DeployPreviewResponse:
         payload = await deploy_service.get_preview()
         return DeployPreviewResponse.model_validate(payload)
+
+    @router.post(
+        "/rollback",
+        response_model=DeployResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        summary="Rollback to the previous successful deployment commit.",
+    )
+    async def rollback(payload: RollbackRequest, background_tasks: BackgroundTasks) -> DeployResponse:
+        try:
+            task, target_commit, current_commit, branch_value = await deploy_service.prepare_rollback(
+                payload.branch
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        background_tasks.add_task(
+            deploy_service.perform_rollback,
+            task.task_id,
+            branch_value,
+            target_commit,
+            current_commit,
+        )
+
+        return DeployResponse(task_id=task.task_id, status=task.status)
 
     return router

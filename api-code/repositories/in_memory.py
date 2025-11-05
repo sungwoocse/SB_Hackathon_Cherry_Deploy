@@ -70,6 +70,18 @@ class InMemoryDeployTaskRepository:
     async def get_report(self, report_id: str) -> Optional[DeployReport]:
         return self._reports.get(report_id)
 
+    async def get_recent_successes(self, branch: str, limit: int = 2) -> list[DeployTask]:
+        successes = [
+            task
+            for task in self._tasks.values()
+            if task.status == DeployStatus.COMPLETED and task.metadata.get("branch") == branch
+        ]
+        successes.sort(
+            key=lambda t: t.completed_at or utc_now(),
+            reverse=True,
+        )
+        return successes[:limit]
+
 
 def _merge_metadata(base: dict, extra: dict) -> None:
     for key, value in extra.items():

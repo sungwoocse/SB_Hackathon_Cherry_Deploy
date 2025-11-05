@@ -71,6 +71,15 @@ class InMemoryDeployTaskRepository:
         self.tasks[task_id] = task
         return task
 
+    async def get_recent_successes(self, branch: str, limit: int = 2) -> list[DeployTask]:
+        successes = [
+            task
+            for task in self.tasks.values()
+            if task.status == DeployStatus.COMPLETED and task.metadata.get("branch") == branch
+        ]
+        successes.sort(key=lambda t: t.completed_at or utc_now(), reverse=True)
+        return successes[:limit]
+
 
 class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:  # noqa: N802
@@ -131,6 +140,79 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_get_task_missing_raises(self) -> None:
         with self.assertRaises(RuntimeError):
             await self.service.get_task("missing")
+
+    async def test_prepare_and_perform_rollback(self) -> None:
+        # seed two successful deploy records
+        oldest = await self.repository.create_task(
+            DeployTaskCreate(task_id="oldest", metadata={"branch": "deploy"})
+        )
+        await self.repository.update_task(
+            oldest.task_id,
+            DeployTaskUpdate(
+                status=DeployStatus.COMPLETED,
+                completed_at=utc_now(),
+                append_metadata={
+                    "summary": {
+                        "result": "success",
+                        "commit": "commit-oldest",
+                        "completed_at": utc_now().isoformat(),
+                    }
+                },
+            ),
+        )
+
+        latest = await self.repository.create_task(
+            DeployTaskCreate(task_id="latest", metadata={"branch": "deploy"})
+        )
+        await self.repository.update_task(
+            latest.task_id,
+            DeployTaskUpdate(
+                status=DeployStatus.COMPLETED,
+                completed_at=utc_now(),
+                append_metadata={
+                    "summary": {
+                        "result": "success",
+                        "commit": "commit-latest",
+                        "completed_at": utc_now().isoformat(),
+                    }
+                },
+            ),
+        )
+
+        task, target_commit, current_commit, branch = await self.service.prepare_rollback("deploy")
+        self.assertEqual(branch, "deploy")
+        self.assertEqual(target_commit, "commit-oldest")
+        self.assertEqual(current_commit, "commit-latest")
+
+        await self.service.perform_rollback(task.task_id, branch, target_commit, current_commit)
+
+        stored = await self.repository.get_task(task.task_id)
+        assert stored is not None
+        self.assertEqual(stored.status, DeployStatus.COMPLETED)
+        summary = stored.metadata.get("summary", {})
+        self.assertEqual(summary.get("rolled_back_from"), "commit-latest")
+        self.assertEqual(summary.get("rolled_back_to"), "commit-oldest")
+
+    async def test_prepare_rollback_requires_history(self) -> None:
+        only = await self.repository.create_task(
+            DeployTaskCreate(task_id="only", metadata={"branch": "deploy"})
+        )
+        await self.repository.update_task(
+            only.task_id,
+            DeployTaskUpdate(
+                status=DeployStatus.COMPLETED,
+                completed_at=utc_now(),
+                append_metadata={
+                    "summary": {
+                        "result": "success",
+                        "commit": "commit-only",
+                        "completed_at": utc_now().isoformat(),
+                    }
+                },
+            ),
+        )
+        with self.assertRaises(RuntimeError):
+            await self.service.prepare_rollback("deploy")
 
 
 def _merge_metadata(base: dict, extra: dict) -> None:

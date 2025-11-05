@@ -50,10 +50,94 @@ class DeployService:
         task = await self.repository.create_task(
             DeployTaskCreate(
                 task_id=task_id,
-                metadata={"branch": branch},
+                metadata={
+                    "branch": branch,
+                    "action": "deploy",
+                },
             )
         )
         return task
+
+    async def prepare_rollback(
+        self, branch: Optional[str] = None
+    ) -> tuple[DeployTask, str, Optional[str], str]:
+        branch = (branch or self.default_branch).strip()
+        if branch not in self.allowed_branches:
+            raise ValueError(
+                f"Branch '{branch}' is not allowed. Allowed branches: {sorted(self.allowed_branches)}"
+            )
+
+        recent = await self.repository.get_recent_successes(branch=branch, limit=2)
+        if len(recent) < 2:
+            raise RuntimeError("Not enough successful deployments to rollback.")
+
+        current, target = recent[0], recent[1]
+        current_commit = (
+            current.metadata.get("summary", {}).get("commit")
+            if isinstance(current.metadata.get("summary"), dict)
+            else None
+        )
+        target_commit = (
+            target.metadata.get("summary", {}).get("commit")
+            if isinstance(target.metadata.get("summary"), dict)
+            else None
+        )
+
+        if not target_commit:
+            raise RuntimeError("Target commit for rollback is unknown.")
+
+        task = await self.repository.create_task(
+            DeployTaskCreate(
+                task_id=uuid4().hex,
+                metadata={
+                    "branch": branch,
+                    "action": "rollback",
+                    "from_commit": current_commit,
+                    "to_commit": target_commit,
+                },
+            )
+        )
+
+        return task, target_commit, current_commit, branch
+
+    async def perform_rollback(
+        self,
+        task_id: str,
+        branch: str,
+        target_commit: str,
+        current_commit: Optional[str],
+    ) -> None:
+        await self.run_pipeline(
+            task_id,
+            branch,
+            target_commit=target_commit,
+            force_push=not self.dry_run,
+        )
+        if current_commit:
+            await self.repository.update_task(
+                task_id,
+                DeployTaskUpdate(
+                    append_metadata={
+                        "summary": {
+                            "rolled_back_from": current_commit,
+                            "rolled_back_to": target_commit,
+                        }
+                    }
+                ),
+            )
+
+    async def rollback(self, branch: Optional[str] = None) -> DeployTask:
+        task, target_commit, current_commit, branch_value = await self.prepare_rollback(branch)
+        await self.perform_rollback(
+            task.task_id,
+            branch_value,
+            target_commit,
+            current_commit,
+        )
+        updated = await self.repository.get_task(task.task_id)
+        if not updated:
+            raise RuntimeError("Rollback task not found after execution.")
+        return updated
 
     async def get_task(self, task_id: str) -> DeployTask:
         task = await self.repository.get_task(task_id)
@@ -61,11 +145,28 @@ class DeployService:
             raise RuntimeError(f"deploy task not found: {task_id}")
         return task
 
-    async def run_pipeline(self, task_id: str, branch: str) -> None:
-        logger.info("Starting deploy pipeline task=%s branch=%s", task_id, branch)
+    async def run_pipeline(
+        self,
+        task_id: str,
+        branch: str,
+        *,
+        target_commit: Optional[str] = None,
+        force_push: bool = False,
+    ) -> None:
+        logger.info(
+            "Starting deploy pipeline task=%s branch=%s target_commit=%s force_push=%s",
+            task_id,
+            branch,
+            target_commit,
+            force_push,
+        )
         try:
             await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CLONE)
-            clone_metadata = await self._run_clone_stage(branch)
+            clone_metadata = await self._run_clone_stage(
+                branch,
+                target_commit=target_commit,
+                force_push=force_push,
+            )
             await self._append_stage_metadata(task_id, DeployStatus.RUNNING_CLONE, clone_metadata)
 
             await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_BUILD)
@@ -85,6 +186,7 @@ class DeployService:
             )
 
             await self.repository.mark_status(task_id, DeployStatus.COMPLETED)
+            summary_commit = await self._get_current_commit()
             await self.repository.update_task(
                 task_id,
                 DeployTaskUpdate(
@@ -92,6 +194,7 @@ class DeployService:
                         "summary": {
                             "completed_at": utc_now().isoformat(),
                             "result": "success",
+                            "commit": summary_commit,
                         }
                     }
                 ),
@@ -136,21 +239,49 @@ class DeployService:
             ),
         )
 
-    async def _run_clone_stage(self, branch: str) -> Dict[str, Any]:
+    async def _run_clone_stage(
+        self,
+        branch: str,
+        *,
+        target_commit: Optional[str] = None,
+        force_push: bool = False,
+    ) -> Dict[str, Any]:
         steps: list[Dict[str, Any]] = []
 
-        commands = [
+        commands: list[tuple[list[str], str]] = [
             (["git", "fetch", "origin"], "Fetch latest refs from origin"),
-            (
-                ["git", "checkout", "-B", branch, f"origin/{branch}"],
-                "Checkout deploy branch aligned with origin",
-            ),
-            (
-                ["git", "reset", "--hard", f"origin/{branch}"],
-                "Hard reset working tree to origin/branch",
-            ),
-            (["git", "clean", "-fdx"], "Remove untracked files (full replace)"),
         ]
+
+        if target_commit:
+            commands.append(
+                (
+                    ["git", "checkout", "-B", branch, target_commit],
+                    "Checkout deploy branch aligned with target commit",
+                )
+            )
+            commands.append(
+                (
+                    ["git", "reset", "--hard", target_commit],
+                    "Hard reset working tree to target commit",
+                )
+            )
+        else:
+            commands.append(
+                (
+                    ["git", "checkout", "-B", branch, f"origin/{branch}"],
+                    "Checkout deploy branch aligned with origin",
+                )
+            )
+            commands.append(
+                (
+                    ["git", "reset", "--hard", f"origin/{branch}"],
+                    "Hard reset working tree to origin/branch",
+                )
+            )
+
+        commands.append(
+            (["git", "clean", "-fdx"], "Remove untracked files (full replace)")
+        )
 
         for cmd, description in commands:
             steps.append(
@@ -161,7 +292,31 @@ class DeployService:
                 )
             )
 
-        return {"branch": branch, "steps": steps}
+        if force_push and target_commit and not self.dry_run:
+            steps.append(
+                await self._run_command(
+                    ["git", "push", "origin", f"+{target_commit}:{branch}"],
+                    cwd=self.chatbot_repo_path,
+                    description="Force push branch to target commit",
+                )
+            )
+        elif force_push and target_commit and self.dry_run:
+            steps.append(
+                {
+                    "description": "Force push branch to target commit",
+                    "command": f"git push origin +{target_commit}:{branch}",
+                    "cwd": str(self.chatbot_repo_path),
+                    "dry_run": True,
+                }
+            )
+
+        return {
+            "branch": branch,
+            "target_commit": target_commit,
+            "force_push": force_push,
+            "dry_run": self.dry_run,
+            "steps": steps,
+        }
 
     async def _run_build_stage(self) -> Dict[str, Any]:
         command = ["npm", "run", "build"]
@@ -205,6 +360,19 @@ class DeployService:
             "dry_run": self.dry_run,
         }
 
+    async def _get_current_commit(self) -> str:
+        result = await self._run_command(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.chatbot_repo_path,
+            description="Resolve current commit SHA",
+        )
+        if self.dry_run:
+            return "dry-run"
+        stdout = result.get("stdout", "").strip()
+        if not stdout:
+            raise RuntimeError("Unable to resolve current commit SHA")
+        return stdout
+
     async def get_preview(self) -> Dict[str, Any]:
         """Return a static preview payload with risk/cost notes for the deploy command."""
         return {
@@ -241,10 +409,10 @@ class DeployService:
             "description": description,
             "command": " ".join(command),
             "cwd": str(cwd) if cwd else None,
+            "dry_run": self.dry_run,
         }
 
         if self.dry_run:
-            metadata["dry_run"] = True
             return metadata
 
         if cwd and not cwd.exists():
