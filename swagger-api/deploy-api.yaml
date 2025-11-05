@@ -1,0 +1,90 @@
+openapi: 3.0.3
+info:
+  title: Cherry Deploy DevOps API
+  version: 0.1.0
+  description: |
+    Trigger Blue/Green deployments for the chatbot frontend. The pipeline stages clone the Repo1 `deploy`
+    branch, build static assets, swap Nginx symlinks, and record observability placeholders.
+    NOTE: This API relies on MongoDB and long-running background tasks; the live FastAPI instance must be
+    running to exercise it. The static YAML here is for documentation only and cannot execute the pipeline by itself.
+    ⚠️ 전체 API 스펙은 `swagger-api/openapi.yaml`을 사용하세요. 이 파일은 참고용 조각 문서입니다.
+servers:
+  - url: https://delight.13-125-116-92.nip.io
+    description: Production-like endpoint (HTTPS via Let's Encrypt)
+  - url: http://127.0.0.1:9001
+    description: Local FastAPI server (bypasses Nginx)
+paths:
+  /api/v1/deploy:
+    post:
+      summary: Trigger a chatbot frontend deployment
+      operationId: triggerDeploy
+      tags:
+        - deploy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployRequest'
+            examples:
+              default:
+                summary: Deploy the default branch
+                value:
+                  branch: deploy
+      responses:
+        "202":
+          description: Deployment accepted; background task scheduled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+              examples:
+                accepted:
+                  summary: Immediate response
+                  value:
+                    task_id: "fd2c3a1d8f1f4d59b6d3f6c5d30d2f7a"
+                    status: "pending"
+        "500":
+          description: Unexpected server error prevented task creation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []
+components:
+  schemas:
+    DeployRequest:
+      type: object
+      properties:
+        branch:
+          type: string
+          minLength: 1
+          description: Optional override for Repo1 branch (defaults to `deploy`).
+    DeployResponse:
+      type: object
+      required:
+        - task_id
+        - status
+      properties:
+        task_id:
+          type: string
+          description: Track this identifier via `/api/v1/status/{task_id}` (to be implemented).
+        status:
+          type: string
+          enum:
+            - pending
+            - running_clone
+            - running_build
+            - running_cutover
+            - running_observability
+            - completed
+            - failed
+          description: Initial state of the deploy task, always `pending` on creation.
+    ErrorResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Error message for operators.

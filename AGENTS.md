@@ -31,7 +31,10 @@
 ## 4. 서버 정보
 - EC2 퍼블릭 IP: `13.125.116.92`
 - 프로젝트 루트: `/home/ec2-user/projects/SB_Hackathon_Cherry_Deploy`
+- MongoDB 로컬 설치 경로: `./mongodb` (tarball 전개) / 데이터: `./mongodb-data` (Git 추적 제외)
+- MongoDB 실행 명령: `./mongodb/bin/mongod --dbpath mongodb-data --bind_ip 127.0.0.1 --port 27017 --fork --logpath mongodb-data/mongod.log`
+- FastAPI 기본값은 **실제 배포** 수행 (`DEPLOY_DRY_RUN=false`). 드라이런이 필요하면 환경변수 `DEPLOY_DRY_RUN=true`로 PM2를 재시작하세요.
+- Repo1(SB_Hackathon_Cherry_Chatbot) 기본 배포 브랜치는 `deploy` (옵션으로 `main`). Deploy 레포의 `upload` 브랜치는 백엔드 작업용으로만 사용합니다.
 
 ## 5. 향후 TODO 힌트
-- 정식 HTTPS 필요 시 도메인 구매 → Let’s Encrypt 발급 → Nginx 인증서 교체
 - 정적 프론트엔드 build 결과물을 Nginx로 서빙하려면 `location /` 블록 수정

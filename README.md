@@ -12,4 +12,9 @@ SoftBank Hackathon 2025 (Team Cherry) - "Make Deployment Delightful" 테마 프�
 * **Backend:** Python
 * **Cloud:** AWS EC2
 
-*(본 README는 레포지토리 초기화를 위한 임시 파일입니다. 프로젝트 설계가 확정되는 대로 공식 문서로 업데이트될 예정입니다.)*
+      1. npm install -g pm2 (한 번만 실행)
+      2. 백엔드 디렉터리로 이동: cd /home/ec2-user/projects/SB_Hackathon_Cherry_Deploy
+      3. 프로세스 등록: pm2 start "uvicorn app_main:app --host 0.0.0.0 --port 9001" --name main-api
+      4. 상태 확인: pm2 status (또는 pm2 logs main-api, pm2 restart main-api)
+      5. 재부팅 후에도 자동 실행되게: pm2 startup systemd, 안내되는 명령 1회 실행 후 pm2 save
+         이렇게 하면 PM2가 uvicorn 프로세스를 백그라운드에서 관리해줍니다.

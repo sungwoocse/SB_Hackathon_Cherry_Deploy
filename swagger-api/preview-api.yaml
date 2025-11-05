@@ -1,0 +1,80 @@
+openapi: 3.0.3
+info:
+  title: Cherry Deploy Preview API
+  version: 0.1.0
+  description: |
+    Provide a high-level overview of the deployment pipeline steps, risks, and rough cost. Useful for a
+    pre-flight check before triggering `/api/v1/deploy`.
+    NOTE: This is a static preview derived from backend configuration; it does not execute commands.
+    ⚠️ 전체 API 스펙은 `swagger-api/openapi.yaml`을 사용하세요. 이 파일은 참고용 조각 문서입니다.
+servers:
+  - url: https://delight.13-125-116-92.nip.io
+    description: Production-like endpoint (HTTPS via Let's Encrypt)
+  - url: http://127.0.0.1:9001
+    description: Local FastAPI server (bypasses Nginx)
+paths:
+  /api/v1/preview:
+    get:
+      summary: Describe the upcoming deploy steps, risks, and costs
+      operationId: previewDeploy
+      tags:
+        - deploy
+      responses:
+        "200":
+          description: Static preview payload showing operational context.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployPreviewResponse'
+              examples:
+                preview:
+                  summary: Typical response
+                  value:
+                    current_branch: "deploy"
+                    target_repo: "/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot"
+                    commands:
+                      - "git fetch origin"
+                      - "git checkout -B deploy origin/deploy"
+                      - "git reset --hard origin/deploy"
+                      - "git clean -fdx"
+                      - "npm run build"
+                      - "sync static assets to nginx green path"
+                    risk_assessment:
+                      downtime: "Minimal (blue/green swap)"
+                      rollback: "Sym-link revert to previous blue directory"
+                      observability: "Manual Lighthouse check pending automation"
+                    cost_estimate:
+                      runtime_minutes: 8
+                      npm_dependencies: "No extra cost"
+                      lighthouse_tokens: "N/A"
+      security: []
+components:
+  schemas:
+    DeployPreviewResponse:
+      type: object
+      required:
+        - current_branch
+        - target_repo
+        - commands
+        - risk_assessment
+        - cost_estimate
+      properties:
+        current_branch:
+          type: string
+          description: Default branch targeted for deploy operations.
+        target_repo:
+          type: string
+          description: Filesystem path of the frontend repository.
+        commands:
+          type: array
+          items:
+            type: string
+          description: Ordered commands executed during deploy.
+        risk_assessment:
+          type: object
+          additionalProperties: true
+          description: Plain-language risk summary.
+        cost_estimate:
+          type: object
+          additionalProperties: true
+          description: Rough execution cost/time details.

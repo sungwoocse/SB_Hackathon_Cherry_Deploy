@@ -1,0 +1,178 @@
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 900px; margin: auto; background-color: #ffffff; color: #333; border: 1px solid #ddd;">
+
+    <h1 style="border-bottom: 2px solid #000; padding-bottom: 10px; font-size: 28px;">
+        🚀 "Delightful Deploy" API 백엔드 최종 구현 계획서 (2-Repo)
+    </h1>
+
+    <h2 style="font-size: 22px; margin-top: 30px;">1. 핵심 원칙: 2-Repo (Polyrepo) 구조</h2>
+    <p style="font-size: 16px;">
+        우리는 '배포될 제품'과 '배포 도구'를 <strong>2개의 독립된 리포지토리</strong>로 분리하여 관리합니다. 이 방식은 EC2에서의 개발/디버깅 시 발생할 수 있는 <strong>Git 충돌을 원천적으로 방지</strong>합니다.
+    </p>
+    
+    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">EC2 리포지토리 폴더 구조</h3>
+    <pre style="background-color: #f4f4f4; padding: 15px; border-radius: 5px; font-family: monospace;">
+/home/ec2-user/projects/
+│
+├── SB_Hackathon_Cherry_Chatbot/   # &lt;--- (Repo 1) 배포될 '제품' (챗봇 프론트엔드)
+│
+└── SB_Hackathon_Cherry_Deploy/    # &lt;--- (Repo 2) 우리의 '도구' (모든 백엔드)
+    │
+    ├── app_main.py                # (DevOps API + 챗봇 API가 모두 이 파일에!)
+    ├── requirements.txt
+    └── ...
+</pre>
+
+    <h2 style="font-size: 22px; margin-top: 30px;">2. 시스템 아키텍처 (단순화됨)</h2>
+    <ul style="margin-left: 20px; font-size: 16px;">
+        <li><strong>[시스템 1] 배포될 '샘플 앱' (챗봇 프론트엔드)</strong>
+            <ul>
+                <li><strong>목적:</strong> 배포/롤백을 시연하기 위한 타겟.</li>
+                <li><strong>소스코드:</strong> <code>Repo 1: SB_Hackathon_Cherry_Chatbot</code></li>
+                <li><strong>실행:</strong> [시스템 2]가 <code>npm run build</code> 후 Nginx로 정적 서빙.</li>
+            </ul>
+        </li>
+        <li><strong>[시스템 2] '핵심 백엔드' (DevOps + 챗봇 API)</strong>
+            <ul>
+                <li><strong>목적:</strong> '배포 기계'이자 '챗봇 API' 서버. (모든 백엔드 통합)</li>
+                <li><strong>소스코드:</strong> <code>Repo 2: SB_Hackathon_Cherry_Deploy</code></li>
+                <li><strong>실행 (PM2):</strong> <code>pm2 start /home/ec2-user/projects/SB_Hackathon_Cherry_Deploy/app_main.py --name main-api --port 9001</code></li>
+            </ul>
+        </li>
+    </ul>
+
+    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+
+    <h2 style="font-size: 22px; margin-top: 30px;">3. [시스템 2] 핵심 API 명세 (Swagger)</h2>
+    <p style="font-size: 16px;">(<code>app_main.py</code>에 구현할 API 목록)</p>
+    <ul style="margin-left: 20px; font-size: 16px;">
+        <li><strong><code>POST /api/v1/deploy</code> (DevOps API)</strong>
+            <ul>
+                <li><strong>설명:</strong> '챗봇 프론트엔드'의 신규 배포를 비동기로 트리거합니다.</li>
+                <li><strong>Request Body (수정됨):</strong> 
+                    <pre style="background-color: #f4f4f4; padding: 10px; border-radius: 5px; font-size: 14px;">
+{
+    "branch": "upload"
+}
+                    </pre>
+                </li>
+            </ul>
+        </li>
+        <li><strong><code>POST /api/v1/rollback</code> (DevOps API)</strong>
+            <ul>
+                <li><strong>설명:</strong> '챗봇 프론트엔드'를 이전 버전으로 롤백합니다.</li>
+            </ul>
+        </li>
+        <li><strong><code>GET /api/v1/status/{task_id}</code> (DevOps API)</strong>
+            <ul>
+                <li><strong>설명:</strong> 배포/롤백 작업의 현재 상태를 폴링(Polling)합니다.</li>
+            </ul>
+        </li>
+        <li><strong><code>GET /api/v1/preview</code> (DevOps API)</strong>
+            <ul>
+                <li><strong>설명:</strong> 배포 전 예상 비용/리스크를 반환합니다. (MVP는 하드코딩)</li>
+            </ul>
+        </li>
+        <li><strong><code>POST /api/v1/chat</code> (챗봇 API)</strong>
+            <ul>
+                <li><strong>설명:</strong> 챗봇 UI가 호출할 간단한 LLM API입니다.</li>
+                <li><strong>Request Body:</strong> <code>{ "message": "string" }</code></li>
+            </ul>
+        </li>
+    </ul>
+
+    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+
+    <h2 style="font-size: 22px; margin-top: 30px;">4. 필수 EC2 환경 및 설치 (EC2 체크리스트)</h2>
+    <ul style="margin-left: 20px; font-size: 16px;">
+        <li><strong>Python 3.12:</strong> EC2 전역에 설치된 Python 3.12를 사용합니다.</li>
+        <li><strong>Node.js / npm:</strong> (<code>npm install -g pm2</code> 및 <code>SB_Hackathon_Cherry_Chatbot</code> <code>build</code>에 필요)</li>
+        <li><strong>Nginx:</strong> (<code>sudo apt install nginx</code>. 리버스 프록시 및 Blue/Green 트래픽 전환용)</li>
+        <li><strong>PM2:</strong> (<code>npm install -g pm2</code>. <code>main-api</code> 관리용)</li>
+        <li><strong>MongoDB:</strong> (<code>sudo apt install mongodb</code>. 배포 이력 및 리포트 저장용)</li>
+        <li><strong>Git:</strong> (<code>sudo apt install git</code>. 소스코드 <code>pull</code>용)</li>
+    </ul>
+
+    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+
+    <h2 style="font-size: 22px; margin-top: 30px;">5. DB 설계 (MongoDB) (수정됨)</h2>
+    <ol style="margin-left: 20px; font-size: 16px;">
+        <li><strong><code>deploy_tasks</code> (배포 작업 관리)</strong>
+            <ul>
+                <li><code>task_id</code> (string, Pkey): UUID</li>
+                <li><code>status</code> (string: "pending", "running_clone", "running_build", "running_cutover", "running_observability", "completed", "failed")</li>
+                <li><code>started_at</code> (datetime)</li>
+                <li><code>completed_at</code> (datetime)</li>
+                <li><code>error_log</code> (string)</li>
+                <li><code>metadata</code> (object): 브랜치 정보 및 각 단계별 메타데이터</li>
+            </ul>
+        </li>
+        <li><strong><code>deploy_reports</code> (배포 결과 리포트)</strong>
+            <ul>
+                <li><code>report_id</code> (string, Pkey, Foreign key to <code>task_id</code>)</li>
+                <li>... (성능 지표) ...</li>
+            </ul>
+        </li>
+    </ol>
+
+    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+
+    <h2 style="font-size: 22px; margin-top: 30px;">6. [시스템 2] 핵심 배포 로직 (<code>POST /deploy</code>) (수정됨)</h2>
+    <p style="font-size: 16px;">
+        (<code>app_main.py</code>의 <code>BackgroundTasks</code> 내부에서 실행될 실제 순서입니다.)
+    </p>
+
+    <ol style="margin-left: 20px; font-size: 16px;">
+        <li><strong>즉시 응답:</strong> <code>task_id</code>를 생성, 브랜치 정보와 함께 DB에 "pending"으로 저장 후, <code>task_id</code>를 즉시 프론트에 반환합니다.</li>
+        <li><strong>(백그라운드 시작)</strong></li>
+        <li><strong>DB 상태 "running_clone":</strong> <code>subprocess</code>로 <strong><code>Repo 1 (Chatbot)</code></strong>의 워킹 디렉터리를 아래 순서로 완전히 교체합니다. (옵션으로 <code>main</code> 허용)
+            <ul>
+                <li><code>git fetch origin</code></li>
+                <li><code>git checkout -B [branch] origin/[branch]</code></li>
+                <li><code>git reset --hard origin/[branch]</code></li>
+                <li><code>git clean -fdx</code></li>
+            </ul>
+            <ul>
+                <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/"</code>)</strong></li>
+            </ul>
+        </li>
+        <li><strong>DB 상태 "running_build":</strong>
+            <ul>
+                <li><code>subprocess</code>로 <code>npm run build</code>를 실행하여 <code>build/</code> 폴더를 생성합니다.</li>
+                <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/"</code>)</strong></li>
+            </ul>
+        </li>
+        <li><strong>DB 상태 "running_cutover":</strong>
+            <ul>
+                <li>새로 생성된 <code>build/</code> 폴더를 Nginx가 서빙할 'Green' 위치로 복사/이동합니다.</li>
+                <li><code>subprocess</code>로 <code>Nginx</code>의 트래픽을 'Green'으로 전환합니다. (예: 심볼릭 링크 변경)</li>
+            </ul>
+        </li>
+        <li><strong>DB 상태 "running_observability":</strong> <code>lighthouse</code> 등을 실행, 성능을 측정하여 DB에 저장합니다.</li>
+        <li><strong>DB 상태 "completed":</strong> 이전 'Blue' 환경을 정리하고 작업을 종료합니다.</li>
+    </ol>
+    <p style="font-size: 16px; color: #555;">※ 현재 기본값은 <code>DEPLOY_DRY_RUN=false</code>라서 위 명령들이 실제 실행됩니다. 테스트 목적으로 시뮬레이션만 원하면 PM2/환경변수에서 <code>DEPLOY_DRY_RUN=true</code>로 설정한 뒤 재시작하세요.</p>
+    
+    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+
+    <h2 style="font-size: 22px; margin-top: 30px;">7. Git 리포지토리 및 브랜치 전략 (수정됨)</h2>
+    <ul style="margin-left: 20px; font-size: 16px;">
+        <li><strong>리포지토리 구조:</strong> 2개의 독립된 리포지토리를 사용합니다.
+            <ul>
+                <li><strong><code>Repo 1: SB_Hackathon_Cherry_Chatbot</code></strong> (배포될 '제품')</li>
+                <li><strong><code>Repo 2: SB_Hackathon_Cherry_Deploy</code></strong> ('배포 기계' + 챗봇 API)</li>
+            </ul>
+        </li>
+        <li><strong>워크플로우:</strong>
+            <ul>
+                <li><strong><code>sungwoo/feature/backend-mvp</code>:</strong> 성우님이 <strong><code>Repo 2 (Deploy)</code></strong>에서 '배포 기계'와 '챗봇 API'를 개발하는 **'개발 브랜치'**입니다.</li>
+                <li><strong><code>deploy</code> (in <code>Repo 1</code>):</strong>
+                    <ul>
+                        <li>[시스템 2]가 <code>git pull</code> 할 기본 **'배포 대상 브랜치'**입니다.</li>
+                        <li>필요 시 <code>main</code> 브랜치도 허용하지만, 기본은 <code>deploy</code>입니다.</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+    </ul>
+
+</div>
