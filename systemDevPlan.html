@@ -178,7 +178,7 @@
     <h2 style="font-size: 22px; margin-top: 30px;">8. 롤백 전략</h2>
     <ul style="margin-left: 20px; font-size: 16px;">
         <li><strong>요청:</strong> <code>POST /api/v1/rollback</code> (기본 브랜치: <code>deploy</code>, 옵션으로 <code>main</code>)</li>
-        <li><strong>검증:</strong> MongoDB에서 최근 2개의 성공 배포 히스토리를 조회 (commit SHA 포함).</li>
+        <li><strong>검증:</strong> MongoDB에서 최근 2개의 성공 배포 히스토리를 조회 (commit SHA 포함). 성공 기록이 2건 미만이면 409로 종료됩니다.</li>
         <li><strong>동작:</strong> 최신 성공 commit을 <code>from_commit</code>, 직전 성공 commit을 <code>to_commit</code>으로 삼아 아래 명령 실행:
             <ul>
                 <li><code>git fetch origin</code></li>
@@ -190,7 +190,7 @@
             </ul>
         </li>
         <li><strong>결과:</strong> <code>/api/v1/status/{task_id}</code>로 롤백 진행 상황과 <code>rolled_back_from/rolled_back_to</code> 메타데이터를 확인.</li>
-        <li><strong>제한:</strong> 성공 기록이 2개 미만이면 409 Conflict로 거절.</li>
+        <li><strong>TODO:</strong> Repo1 <code>deploy</code> 브랜치 구조 정리 및 <code>npm install</code>/<code>npm run build</code> 베이스라인 마련 필요. 현재 다중 프로젝트가 혼재되어 있어 빌드 실패 가능성이 높음.</li>
     </ul>
 
 </div>
