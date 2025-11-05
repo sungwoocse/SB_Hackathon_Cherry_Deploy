@@ -1,0 +1,96 @@
+openapi: 3.0.3
+info:
+  title: Cherry Deploy Chat API
+  summary: Hackathon chatbot endpoint backed by Google Gemini 2.5 Flash.
+  description: >
+    Lightweight chat interface used by the Cherry Deploy frontend. Requests are proxied
+    through Nginx to the FastAPI backend running on EC2 and forwarded to Google Gemini.
+    The public entrypoint uses a nip.io dynamic subdomain protected by a Let's Encrypt certificate.
+  version: 0.2.0
+servers:
+  - url: https://delight.13-125-116-92.nip.io
+    description: Production-like endpoint (HTTPS via Let's Encrypt).
+  - url: http://127.0.0.1:9001
+    description: Direct FastAPI access for local debugging (bypass Nginx).
+paths:
+  /api/v1/chat:
+    post:
+      operationId: createChatCompletion
+      summary: Send a user message and receive a Gemini-generated reply.
+      tags:
+        - chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            examples:
+              sample:
+                summary: Basic greeting
+                value:
+                  message: "안녕하세요! 배포 상황이 어떤지 알려주세요."
+      responses:
+        "200":
+          description: Gemini replied successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                sample:
+                  summary: Success response
+                  value:
+                    reply: "안녕하세요! 현재 배포 파이프라인은 정상 동작 중입니다."
+                    model: "gemini-2.5-flash"
+        "400":
+          description: The request payload failed validation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty-message:
+                  summary: Empty message error
+                  value:
+                    detail: "Prompt must be a non-empty string."
+        "500":
+          description: Unexpected server error when contacting Gemini.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          minLength: 1
+          description: User utterance forwarded to Gemini 2.5 Flash.
+    ChatResponse:
+      type: object
+      required:
+        - reply
+        - model
+      properties:
+        reply:
+          type: string
+          description: Natural language answer produced by Gemini.
+        model:
+          type: string
+          description: >
+            The Gemini model identifier currently fixed to `gemini-2.5-flash`.
+          example: gemini-2.5-flash
+    ErrorResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Human-readable error message.
