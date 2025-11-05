@@ -1,0 +1,10 @@
+{
+  "status": "healthy",
+  "pipeline": "deploying",
+  "lock": false,
+  "metrics": { "p95": 312, "error_rate": 0.9 },
+  "comparison": { "before_p95": 400, "after_p95": 312, "before_err": 1.2, "after_err": 0.9 },
+  "cost": "$4.8/hr",
+  "risk": "low",
+  "updated_at": "2025-11-06T07:00:00Z"
+}
