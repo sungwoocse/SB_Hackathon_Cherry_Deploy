@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shlex
 import shutil
 import textwrap
@@ -490,13 +491,16 @@ class DeployService:
             }
 
         build_dir = self.frontend_build_output_path
+        current_target = self._resolve_live_target()
+        next_target = self._select_next_target(current_target)
         metadata: Dict[str, Any] = {
-            "source": str(build_dir),
-            "green_target": str(self.nginx_green_path),
-            "live_symlink": str(self.nginx_live_symlink),
+            "source": str(self._normalize_path(build_dir)),
+            "next_target": str(self._normalize_path(next_target)),
+            "previous_target": str(self._normalize_path(current_target)) if current_target else None,
+            "live_symlink": str(self._normalize_path(self.nginx_live_symlink)),
+            "dry_run": self.dry_run,
         }
         if self.dry_run:
-            metadata["dry_run"] = True
             return metadata
 
         if not build_dir.exists():
@@ -504,17 +508,17 @@ class DeployService:
         if not build_dir.is_dir():
             raise RuntimeError(f"build output is not a directory: {build_dir}")
 
-        self.nginx_green_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.nginx_green_path.exists():
-            shutil.rmtree(self.nginx_green_path)
-        shutil.copytree(build_dir, self.nginx_green_path)
+        next_target.parent.mkdir(parents=True, exist_ok=True)
+        if next_target.exists():
+            shutil.rmtree(next_target)
+        shutil.copytree(build_dir, next_target)
 
         if self.nginx_live_symlink.exists() or self.nginx_live_symlink.is_symlink():
             self.nginx_live_symlink.unlink()
-        self.nginx_live_symlink.symlink_to(self.nginx_green_path, target_is_directory=True)
+        self.nginx_live_symlink.symlink_to(next_target, target_is_directory=True)
 
-        metadata["dry_run"] = False
         metadata["copied"] = True
+        metadata["switched"] = True
         return metadata
 
     async def _run_observability_stage(self) -> Dict[str, Any]:
@@ -523,6 +527,39 @@ class DeployService:
             "message": "Observability checks are not implemented yet.",
             "dry_run": self.dry_run,
         }
+
+    @staticmethod
+    def _normalize_path(path: Path) -> Path:
+        return path.resolve(strict=False)
+
+    def _resolve_live_target(self) -> Optional[Path]:
+        symlink = self.nginx_live_symlink
+        if not symlink.exists() and not symlink.is_symlink():
+            return None
+        if symlink.is_symlink():
+            target = Path(os.readlink(symlink))
+            if not target.is_absolute():
+                target = (symlink.parent / target)
+            else:
+                target = target
+            return self._normalize_path(target)
+        return self._normalize_path(symlink)
+
+    def _select_next_target(self, current_target: Optional[Path]) -> Path:
+        if current_target is None:
+            return self.nginx_green_path
+
+        current_norm = self._normalize_path(current_target)
+        green_norm = self._normalize_path(self.nginx_green_path)
+        blue_norm = self._normalize_path(self.nginx_blue_path)
+
+        if current_norm == green_norm:
+            return self.nginx_blue_path
+        if current_norm == blue_norm:
+            return self.nginx_green_path
+
+        # Unknown target; default to cycling back to green.
+        return self.nginx_green_path
 
     async def _get_current_commit(self) -> str:
         result = await self._run_command(

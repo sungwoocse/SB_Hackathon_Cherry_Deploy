@@ -258,6 +258,31 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_second.status, DeployStatus.COMPLETED)
 
 
+    async def test_cutover_metadata_cycles_between_targets(self) -> None:
+        self.service.frontend_build_output_path = Path("./fake_build")
+        live_symlink = self.service.nginx_live_symlink
+        if live_symlink.exists() or live_symlink.is_symlink():
+            live_symlink.unlink()
+        live_symlink.symlink_to(self.service.nginx_green_path, target_is_directory=True)
+        self.addCleanup(lambda: live_symlink.unlink(missing_ok=True))
+
+        request = DeployRequest(branch="deploy")
+        task = await self.service.create_task(branch=request.branch or "")
+        await self.service.run_pipeline(task.task_id, request.branch or "")
+
+        stored = await self.repository.get_task(task.task_id)
+        assert stored is not None
+        cutover_meta = stored.metadata[DeployStatus.RUNNING_CUTOVER.value]
+        self.assertEqual(
+            cutover_meta["next_target"],
+            str(self.service.nginx_blue_path.resolve()),
+        )
+        self.assertEqual(
+            cutover_meta["previous_target"],
+            str(self.service.nginx_green_path.resolve()),
+        )
+        self.assertTrue(cutover_meta["dry_run"])
+
 def _merge_metadata(base: dict, extra: dict) -> None:
     for key, value in extra.items():
         if isinstance(value, dict):

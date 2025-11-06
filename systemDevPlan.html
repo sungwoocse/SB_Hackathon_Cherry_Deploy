@@ -138,7 +138,7 @@
         </li>
         <li><strong>DB 상태 "running_cutover":</strong>
             <ul>
-                <li>현재 기본 모드는 개발 서버를 사용하는 관계로 컷오버 단계를 건너뜁니다. 정적 산출물이 필요한 경우 환경변수로 출력 디렉터리를 지정하면 이 단계가 활성화됩니다.</li>
+                <li>정적 산출물 경로가 설정되면, 현재 라이브 심볼릭 링크를 확인해 반대 슬롯(Blue ↔ Green)에 빌드 결과를 복사하고, <code>current</code> 링크를 새 슬롯으로 스왑합니다. Dry-run 모드에서는 실제 복사 없이 대상만 계산합니다.</li>
             </ul>
         </li>
         <li><strong>DB 상태 "running_observability":</strong> Preview API가 git diff를 수집하고 Gemini 2.5 Flash로 요약을 생성합니다.</li>

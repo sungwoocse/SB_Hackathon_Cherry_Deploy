@@ -44,10 +44,10 @@
     <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(B) 실제 구현 (수정 완료)</h3>
     <ul style="margin-left: 20px; font-size: 16px;">
         <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code>를 호출</li>
-        <li><strong>자동 흐름:</strong> FastAPI 백엔드가 <code>git fetch → checkout/reset → clean → npm install → pm2 start</code> 순으로 실행하고 (옵션) Nginx 심볼릭 링크를 갱신</li>
+        <li><strong>자동 흐름:</strong> FastAPI 백엔드가 <code>git fetch → checkout/reset → clean → npm install → pm2 start</code> 순으로 실행하고 필요 시 Nginx Blue/Green 심볼릭 링크를 스왑</li>
         <li><strong>안전장치:</strong> 실패 시 직전 성공 커밋 대상으로 자동 롤백 시도, SSH 키와 환경 변수는 EC2에만 저장</li>
         <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 Gemini 2.5 Flash로 요약해 변경 사항과 리스크를 공유</li>
-        <li><strong>동시성:</strong> 배포 락/큐 기능을 서버 측에 도입해 직렬화 (추가 구현 예정)</li>
+        <li><strong>동시성:</strong> 서버 레벨 락으로 배포를 직렬화해 충돌을 방지</li>
     </ul>
 
     <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(C) 1줄 핵심</h3>
@@ -77,7 +77,7 @@
         <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code> 엔드포인트를 호출한다.</li>
         <li><strong>저장소 동기화:</strong> 서버 측에서 <code>git fetch → checkout/reset → clean</code> 순으로 Repo1 워킹 디렉터리를 최신화한다.</li>
         <li><strong>빌드/재기동:</strong> <code>npm install</code> 후 PM2로 <code>npm run dev</code>를 백그라운드 실행한다(프로세스명 <code>frontend-dev</code>).</li>
-        <li><strong>컷오버:</strong> 정적 산출물이 존재하면 Nginx 심볼릭 링크를 새로운 Green 경로에 맞춰 스왑한다(Blue/Green 전환 고도화 예정).</li>
+        <li><strong>컷오버:</strong> 정적 산출물이 존재하면 현재 라이브 슬롯을 확인해 상대편 슬롯으로 동기화하고, Nginx 심볼릭 링크를 새 슬롯으로 스왑한다.</li>
         <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 요약해 팀원에게 공유한다.</li>
         <li><strong>상태 모니터링:</strong> 클라이언트는 <code>/api/v1/status/{task_id}</code>로 진행 상황과 메타데이터를 폴링한다.</li>
         <li><strong>자동 롤백:</strong> <code>npm install</code> 또는 PM2 단계에서 오류가 발생하면 직전 성공 커밋으로 자동 복구를 시도한다.</li>
