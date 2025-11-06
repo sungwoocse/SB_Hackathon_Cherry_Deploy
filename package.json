@@ -1,11 +1,11 @@
 ﻿{
-  "name": "devops-frontend",
+  "name": "cherry-chatbot-frontend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
+    "dev": "cd frontend/my-dashboard && npm run dev",
+    "build": "cd frontend/my-dashboard && npm run build",
+    "start": "cd frontend/my-dashboard && npm run start"
   },
   "dependencies": {
     "next": "14.2.4",
@@ -19,5 +19,8 @@
     "tailwindcss": "^4.0.0",
     "@types/react": "^19.0.0",
     "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
