@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>일단만들어 챗봇</title>
+
+    <!-- 최소 스타일 (Tailwind 불필요) -->
+    <style>
+      :root {
+        --bg: #0f172a;      /* slate-900 */
+        --panel: #111827;   /* gray-900 */
+        --panel-2: #1f2937; /* gray-800 */
+        --text: #e5e7eb;    /* gray-200 */
+        --muted: #9ca3af;   /* gray-400 */
+        --blue: #2563eb;    /* blue-600 */
+        --blue-2: #1d4ed8;  /* blue-700 */
+        --border: #374151;  /* gray-700 */
+      }
+
+      html, body, #root {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+
+      /* 팝업 애니메이션 */
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      /* 스크롤바 */
+      .scroll {
+        scrollbar-width: thin;
+      }
+      .scroll::-webkit-scrollbar { width: 8px; }
+      .scroll::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 8px; }
+      .scroll::-webkit-scrollbar-track { background: transparent; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
