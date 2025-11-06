@@ -1,29 +1,21 @@
-import "./globals.css";
-import Sidebar from "./components/Sidebar";
-import Header from "./components/Header";
-import Character from "./components/Character"; //
-
+// frontend/my-dashboard/app/layout.tsx
 export const metadata = {
-  title: "DevOps Dashboard",
-  description: "Frontend for DevOps system",
+  title: "DevOps Deploy Dashboard",
+  description: "Green/Blue Deployment Monitor",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
-      <body className="flex h-screen overflow-hidden bg-gray-900 text-white">
-        {/* Sidebar */}
-        <Sidebar />
-
-        {/* Main Content Area */}
-        <div className="flex flex-col flex-1 overflow-y-auto">
-          <Header />
-          <main className="flex-1 p-6">{children}</main>
-        </div>
+      <body
+        style={{
+          margin: 0,
+          fontFamily: "system-ui, sans-serif",
+          backgroundColor: "#0d1117",
+          color: "white",
+        }}
+      >
+        {children}
       </body>
     </html>
   );
