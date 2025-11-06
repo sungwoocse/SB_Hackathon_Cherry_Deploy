@@ -58,6 +58,37 @@ class Settings(BaseModel):
         alias="DEPLOY_ALLOWED_BRANCHES",
         description="Comma-separated list of branches permitted for deploy operations.",
     )
+    frontend_project_subdir: str = Field(
+        default="frontend/my-dashboard",
+        alias="FRONTEND_PROJECT_SUBDIR",
+        description="Relative path to the frontend project within the chatbot repository.",
+    )
+    frontend_install_command: str = Field(
+        default="npm install",
+        alias="FRONTEND_INSTALL_COMMAND",
+        description="Command used to install frontend dependencies.",
+    )
+    frontend_build_command: str = Field(
+        default='bash -lc "pm2 delete frontend-dev 2>/dev/null || true; pm2 start npm --name frontend-dev -- run dev -- --hostname 0.0.0.0 --port 3000"',
+        alias="FRONTEND_BUILD_COMMAND",
+        description="Command used to build the frontend application.",
+    )
+    frontend_export_command: Optional[str] = Field(
+        default=None,
+        alias="FRONTEND_EXPORT_COMMAND",
+        description=(
+            "Optional command to generate static export artifacts after build. "
+            "Set to blank to skip."
+        ),
+    )
+    frontend_build_output_subdir: str = Field(
+        default="",
+        alias="FRONTEND_BUILD_OUTPUT_SUBDIR",
+        description=(
+            "Relative path to the directory containing deployable frontend assets "
+            "after build/export."
+        ),
+    )
 
     model_config = {"populate_by_name": True}
 

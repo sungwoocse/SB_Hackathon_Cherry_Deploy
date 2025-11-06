@@ -69,6 +69,7 @@
         <li><strong>트래픽 제어 (Gateway):</strong> Nginx (리버스 프록시, Blue/Green 전환용)</li>
         <li><strong>프로세스 관리 (Runner):</strong> PM2 (무중단 재시작)</li>
         <li><strong>관측 (Observability):</strong> Lighthouse, Autocannon (<strong>GitHub Summary</strong>에 리포트)</li>
+        <li><strong>프론트엔드 타겟:</strong> Next.js 앱 (경로: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run dev</code>, <code>npm run build</code> 실행이 가능.</li>
     </ul>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🌊 배포 파이프라인 흐름</h3>
@@ -77,6 +78,7 @@
         <li><strong>빌드/테스트:</strong> Actions가 Frontend/Backend 빌드 및 Lint/테스트 수행.</li>
         <li><strong>관측 (Pre-Deploy):</strong> Actions가 <strong>현재 운영 버전</strong>의 성능(LCP, p95) 스냅샷 저장.</li>
         <li><strong>배포:</strong> Actions가 <strong>EC2로</strong> 빌드 산출물(Artifact) 전송. (<strong>SSH/rsync</strong>)</li>
+        <li><strong>EC2 파이프라인:</strong> Repo1을 체크아웃한 뒤 <strong><code>npm install</code></strong>을 실행하고, PM2로 <strong>`npm run dev`</strong>를 백그라운드에 기동합니다(기본 프로세스명 `frontend-dev`). 정적 산출물을 사용하지 않는 모드이며 필요 시 환경변수로 명령/출력 디렉터리를 커스터마이즈할 수 있습니다.</li>
         <li><strong>재시작:</strong> Actions가 <strong>EC2</strong>의 <code>pm2 reload all</code> 명령을 원격 실행 (무중단).</li>
         <li><strong>헬스 체크:</strong> Actions가 <strong>새 버전</strong>의 <code>/healthz</code> 엔드포인트를 1분간 체크.</li>
         <li><strong>관측 (Post-Deploy):</strong> Actions가 <strong>새 버전</strong>의 성능 스냅샷 저장.</li>
@@ -101,7 +103,7 @@
     </p>
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 롤백은 어떻게 동작하나요?</h4>
     <p style="margin: 0 0 15px 0;">
-        A: <code>POST /api/v1/rollback</code>을 호출하면 최근 성공 배포 두 건을 확인해 최신 commit에서 바로 이전 commit으로 되돌립니다. 내부적으로 <code>git fetch</code>, <code>git checkout -B ... to_commit</code>, <code>git reset --hard</code>, <code>git clean -fdx</code>, <code>npm run build</code> 순으로 실행하며, 실제 모드에서는 <code>git push origin +to_commit:branch</code>로 원격도 강제로 되돌립니다. 성공 기록이 2건 미만이면 409로 거절됩니다. (TIP: Repo1 <code>deploy</code> 브랜치에는 <code>frontend/chatbot</code>만 올려두세요.)</p>
+        A: <code>POST /api/v1/rollback</code>을 호출하면 최근 성공 배포 두 건을 확인해 최신 commit에서 바로 이전 commit으로 되돌립니다. 내부적으로 <code>git fetch</code>, <code>git checkout -B ... to_commit</code>, <code>git reset --hard</code>, <code>git clean -fdx</code>, <code>npm install</code> 후 동일한 PM2 `npm run dev` 명령을 재적용합니다. 실제 모드에서는 <code>git push origin +to_commit:branch</code>로 원격도 강제로 되돌립니다. (TIP: Repo1 <code>deploy</code> 브랜치에는 <code>frontend/my-dashboard</code>만 올려두세요.)</p>
 
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 백엔드 <code>/api/v1/deploy</code> 호출 시 어떤 입력이 필요한가요?</h4>
     <p style="margin: 0 0 15px 0;">
@@ -110,7 +112,7 @@
     </p>
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 테스트 모드(드라이런)와 실제 배포 모드는 어떻게 전환하나요?</h4>
     <p style="margin: 0 0 15px 0;">
-        A: 기본값은 실제 명령 실행(<code>DEPLOY_DRY_RUN=false</code>)입니다. 시뮬레이션만 원하면 PM2를 재시작하기 전에 환경변수 <code>DEPLOY_DRY_RUN=true</code>를 설정하세요. MongoDB는 프로젝트 루트의 <code>./mongodb</code>, 데이터는 <code>./mongodb-data</code>에 위치합니다. 실제 배포 모드에서는 <code>git fetch → git checkout -B ... → git reset --hard → git clean -fdx</code> 순으로 Repo1 워킹 디렉터리를 전부 교체한 뒤 <code>npm run build</code>를 실행합니다.</p>
+        A: 기본값은 실제 명령 실행(<code>DEPLOY_DRY_RUN=false</code>)입니다. 시뮬레이션만 원하면 PM2를 재시작하기 전에 환경변수 <code>DEPLOY_DRY_RUN=true</code>를 설정하세요. MongoDB는 프로젝트 루트의 <code>./mongodb</code>, 데이터는 <code>./mongodb-data</code>에 위치합니다. 실제 배포 모드에서는 <code>git fetch → git checkout -B ... → git reset --hard → git clean -fdx → npm install</code> 순으로 Repo1 워킹 디렉터리를 교체한 뒤 PM2 `npm run dev` 명령을 실행합니다.</p>
 
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: "관측 (Observability)"은 정확히 무엇을 하나요?</h4>
     <p style="margin: 0 0 15px 0;">

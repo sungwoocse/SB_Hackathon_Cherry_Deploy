@@ -28,7 +28,8 @@
             <ul>
                 <li><strong>목적:</strong> 배포/롤백을 시연하기 위한 타겟.</li>
                 <li><strong>소스코드:</strong> <code>Repo 1: SB_Hackathon_Cherry_Chatbot</code></li>
-                <li><strong>실행:</strong> [시스템 2]가 <code>npm run build</code> 후 Nginx로 정적 서빙.</li>
+                <li><strong>프레임워크:</strong> Next.js 앱 (루트: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run dev</code>, <code>npm run build</code>가 동작합니다.</li>
+                <li><strong>실행:</strong> [시스템 2]가 <code>npm install</code>을 수행한 뒤 PM2로 <code>npm run dev</code>를 백그라운드(`frontend-dev`)에 기동합니다.</li>
             </ul>
         </li>
         <li><strong>[시스템 2] '핵심 백엔드' (DevOps + 챗봇 API)</strong>
@@ -137,14 +138,13 @@
         </li>
         <li><strong>DB 상태 "running_build":</strong>
             <ul>
-                <li><code>subprocess</code>로 <code>npm run build</code>를 실행하여 <code>build/</code> 폴더를 생성합니다.</li>
-                <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/"</code>)</strong></li>
+                <li><code>subprocess</code>로 <strong><code>npm install</code></strong>을 실행한 뒤, 기본값으로 <code>pm2 start npm --name frontend-dev -- run dev</code>를 호출해 개발 서버를 띄웁니다. 필요하면 <code>FRONTEND_BUILD_COMMAND</code> 환경변수로 명령을 교체할 수 있습니다.</li>
+                <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/frontend/my-dashboard/"</code>)</strong></li>
             </ul>
         </li>
         <li><strong>DB 상태 "running_cutover":</strong>
             <ul>
-                <li>새로 생성된 <code>build/</code> 폴더를 Nginx가 서빙할 'Green' 위치로 복사/이동합니다.</li>
-                <li><code>subprocess</code>로 <code>Nginx</code>의 트래픽을 'Green'으로 전환합니다. (예: 심볼릭 링크 변경)</li>
+                <li>현재 기본 모드는 개발 서버를 사용하는 관계로 컷오버 단계를 건너뜁니다. 정적 산출물이 필요한 경우 환경변수로 출력 디렉터리를 지정하면 이 단계가 활성화됩니다.</li>
             </ul>
         </li>
         <li><strong>DB 상태 "running_observability":</strong> <code>lighthouse</code> 등을 실행, 성능을 측정하여 DB에 저장합니다.</li>
@@ -186,11 +186,11 @@
                 <li><code>git reset --hard to_commit</code></li>
                 <li><code>git clean -fdx</code></li>
                 <li><code>git push origin +to_commit:[branch]</code> (실제 모드에서만)</li>
-                <li><code>npm run build</code> → Green 디렉터리 교체</li>
+                <li><code>npm install</code> 후 PM2 `npm run dev` 명령을 재적용</li>
             </ul>
         </li>
         <li><strong>결과:</strong> <code>/api/v1/status/{task_id}</code>로 롤백 진행 상황과 <code>rolled_back_from/rolled_back_to</code> 메타데이터를 확인.</li>
-        <li><strong>주의:</strong> Repo1 <code>deploy</code> 브랜치에는 배포 대상인 <code>frontend/chatbot</code>만 포함시키고, 기타 디렉터리는 별도 브랜치로 관리하세요.</li>
+        <li><strong>주의:</strong> Repo1 <code>deploy</code> 브랜치에는 배포 대상인 <code>frontend/my-dashboard</code>만 포함시키고, 기타 디렉터리는 별도 브랜치로 관리하세요.</li>
     </ul>
 
 </div>

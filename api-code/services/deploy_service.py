@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -24,6 +25,7 @@ class DeployService:
         self.settings = settings
         self.dry_run = settings.deploy_dry_run
         self.chatbot_repo_path = Path(settings.chatbot_repo_path)
+        self.frontend_project_path = self._resolve_frontend_path(settings.frontend_project_subdir)
         self.nginx_green_path = Path(settings.nginx_green_path)
         self.nginx_blue_path = Path(settings.nginx_blue_path)
         self.nginx_live_symlink = Path(settings.nginx_live_symlink)
@@ -39,6 +41,37 @@ class DeployService:
             self.default_branch,
             sorted(self.allowed_branches),
         )
+
+        self.frontend_install_command = self._parse_command(settings.frontend_install_command)
+        self.frontend_build_command = self._parse_command(settings.frontend_build_command)
+        export_cmd = (settings.frontend_export_command or "").strip()
+        self.frontend_export_command = self._parse_command(export_cmd) if export_cmd else None
+        self.frontend_build_output_path = self._resolve_output_path(
+            settings.frontend_build_output_subdir
+        )
+
+    def _resolve_frontend_path(self, subdir: str) -> Path:
+        subdir = (subdir or "").strip()
+        candidate = Path(subdir)
+        if candidate.is_absolute():
+            return candidate
+        return (self.chatbot_repo_path / candidate).resolve()
+
+    def _resolve_output_path(self, subdir: str) -> Optional[Path]:
+        subdir = (subdir or "").strip()
+        if not subdir:
+            return None
+        candidate = Path(subdir)
+        if candidate.is_absolute():
+            return candidate
+        return (self.frontend_project_path / candidate).resolve()
+
+    @staticmethod
+    def _parse_command(command: str) -> list[str]:
+        command = (command or "").strip()
+        if not command:
+            return []
+        return shlex.split(command)
 
     async def create_task(self, *, branch: str) -> DeployTask:
         branch = (branch or self.default_branch).strip()
@@ -321,15 +354,49 @@ class DeployService:
         }
 
     async def _run_build_stage(self) -> Dict[str, Any]:
-        command = ["npm", "run", "build"]
-        return await self._run_command(
-            command,
-            cwd=self.chatbot_repo_path,
-            description="Build frontend artifacts",
+        steps: list[Dict[str, Any]] = []
+
+        if self.frontend_install_command:
+            steps.append(
+                await self._run_command(
+                    self.frontend_install_command,
+                    cwd=self.frontend_project_path,
+                    description="Install frontend dependencies",
+                )
+            )
+
+        steps.append(
+            await self._run_command(
+                self.frontend_build_command or ["npm", "run", "build"],
+                cwd=self.frontend_project_path,
+                description="Build frontend application",
+            )
         )
 
+        if self.frontend_export_command:
+            steps.append(
+                await self._run_command(
+                    self.frontend_export_command,
+                    cwd=self.frontend_project_path,
+                    description="Export static frontend assets",
+                )
+            )
+
+        return {
+            "project_path": str(self.frontend_project_path),
+            "output_path": str(self.frontend_build_output_path) if self.frontend_build_output_path else None,
+            "steps": steps,
+        }
+
     async def _run_cutover_stage(self) -> Dict[str, Any]:
-        build_dir = self.chatbot_repo_path / "build"
+        if self.frontend_build_output_path is None:
+            return {
+                "skipped": True,
+                "reason": "No build output directory configured; assuming dev server mode.",
+                "dry_run": self.dry_run,
+            }
+
+        build_dir = self.frontend_build_output_path
         metadata: Dict[str, Any] = {
             "source": str(build_dir),
             "green_target": str(self.nginx_green_path),
@@ -341,6 +408,8 @@ class DeployService:
 
         if not build_dir.exists():
             raise RuntimeError(f"build directory missing: {build_dir}")
+        if not build_dir.is_dir():
+            raise RuntimeError(f"build output is not a directory: {build_dir}")
 
         self.nginx_green_path.parent.mkdir(parents=True, exist_ok=True)
         if self.nginx_green_path.exists():
@@ -377,17 +446,35 @@ class DeployService:
 
     async def get_preview(self) -> Dict[str, Any]:
         """Return a static preview payload with risk/cost notes for the deploy command."""
+        command_plan = [
+            "git fetch origin",
+            f"git checkout -B {self.default_branch} origin/{self.default_branch}",
+            f"git reset --hard origin/{self.default_branch}",
+            "git clean -fdx",
+        ]
+
+        if self.frontend_install_command:
+            command_plan.append(" ".join(self.frontend_install_command))
+
+        build_cmd = self.frontend_build_command or ["npm", "run", "build"]
+        command_plan.append(" ".join(build_cmd))
+
+        if self.frontend_export_command:
+            command_plan.append(" ".join(self.frontend_export_command))
+
+        if self.frontend_build_output_path:
+            command_plan.append("sync static assets to nginx green path")
+        else:
+            command_plan.append("no static cutover (dev-server mode)")
+
         return {
             "current_branch": self.default_branch,
             "target_repo": str(self.chatbot_repo_path),
-            "commands": [
-                "git fetch origin",
-                f"git checkout -B {self.default_branch} origin/{self.default_branch}",
-                f"git reset --hard origin/{self.default_branch}",
-                "git clean -fdx",
-                "npm run build",
-                "sync static assets to nginx green path",
-            ],
+            "frontend_project_path": str(self.frontend_project_path),
+            "frontend_output_path": str(self.frontend_build_output_path)
+            if self.frontend_build_output_path
+            else None,
+            "commands": command_plan,
             "risk_assessment": {
                 "downtime": "Minimal (blue/green swap)",
                 "rollback": "Sym-link revert to previous blue directory",
