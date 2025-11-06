@@ -7,5 +7,17 @@
     "active": "green",
     "blueVersion": "v1.2.0",
     "greenVersion": "v1.3.0"
+  },
+  "health": {
+    "healthy": 88,
+    "unhealthy": 12
+  },
+  "traffic": {
+    "green": 70,
+    "blue": 30
+  },
+  "rollbackLog": {
+    "lastRollback": "2025-11-05 13:20",
+    "reason": "High error rate detected"
   }
 }
