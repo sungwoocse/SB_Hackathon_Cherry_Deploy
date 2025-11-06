@@ -43,11 +43,11 @@
 
     <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(B) 실제 구현 (수정 완료)</h3>
     <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>입력:</strong> <code>main</code>에 merge or "Deploy" 버튼 클릭</li>
-        <li><strong>자동 흐름:</strong> Lint/테스트/보안 스캔 → <strong>무중단 릴리스 (PM2 Reload)</strong> → 헬스체크 → (데모: <strong>Blue-Green 트래픽 전환</strong>) → 관측 대시보드 자동 스냅샷</li>
-        <li><strong>안전장치:</strong> 실패 시 자동 롤백(30초 내), <strong>비밀키는 GitHub Secrets (SSH), EC2 접속 권한 최소화</strong></li>
-        <li><strong>관측:</strong> 배포 직전/직후 지연시간·에러율·CPU 비교 카드가 <strong>GitHub Actions Summary에 자동 게시</strong></li>
-        <li><strong>동시성:</strong> "배포 큐" 또는 환경 락으로 충돌 방지(직렬화)</li>
+        <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code>를 호출</li>
+        <li><strong>자동 흐름:</strong> FastAPI 백엔드가 <code>git fetch → checkout/reset → clean → npm install → pm2 start</code> 순으로 실행하고 (옵션) Nginx 심볼릭 링크를 갱신</li>
+        <li><strong>안전장치:</strong> 실패 시 직전 성공 커밋 대상으로 자동 롤백 시도, SSH 키와 환경 변수는 EC2에만 저장</li>
+        <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 Gemini 2.5 Flash로 요약해 변경 사항과 리스크를 공유</li>
+        <li><strong>동시성:</strong> 배포 락/큐 기능을 서버 측에 도입해 직렬화 (추가 구현 예정)</li>
     </ul>
 
     <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(C) 1줄 핵심</h3>
@@ -59,38 +59,35 @@
 
     <h2 style="font-size: 24px; margin-top: 30px;">3. 실행 계획: 기술 스택 및 흐름</h2>
     <p style="font-size: 18px; font-weight: 500; background-color: #f4f4f4; padding: 15px; border-radius: 8px;">
-        <strong>"Actions로 오케스트레이션·감사·동시성·가시성, PM2로 무중단/프로세스 관리"</strong>
+        <strong>"Cherry Deploy API로 오케스트레이션, PM2로 무중단/프로세스 관리"</strong>
     </p>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🛠️ 핵심 기술 스택</h3>
     <ul>
-        <li><strong>지휘 (Orchestration):</strong> GitHub Actions</li>
-        <li><strong>인프라 (Infra):</strong> AWS EC2 (<strong>SSH</strong>로 접속)</li>
+        <li><strong>지휘 (Orchestration):</strong> Cherry Deploy FastAPI 백엔드</li>
+        <li><strong>인프라 (Infra):</strong> AWS EC2 (SSH 기반 관리)</li>
         <li><strong>트래픽 제어 (Gateway):</strong> Nginx (리버스 프록시, Blue/Green 전환용)</li>
         <li><strong>프로세스 관리 (Runner):</strong> PM2 (무중단 재시작)</li>
-        <li><strong>관측 (Observability):</strong> Lighthouse, Autocannon (<strong>GitHub Summary</strong>에 리포트)</li>
+        <li><strong>변경 요약 (Preview):</strong> Gemini 2.5 Flash를 이용한 git diff 요약</li>
         <li><strong>프론트엔드 타겟:</strong> Next.js 앱 (경로: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run dev</code>, <code>npm run build</code> 실행이 가능.</li>
     </ul>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🌊 배포 파이프라인 흐름</h3>
     <ol>
-        <li><strong>트리거:</strong> <code>main</code> 브랜치에 Push 또는 수동 "배포!" 버튼 클릭.</li>
-        <li><strong>빌드/테스트:</strong> Actions가 Frontend/Backend 빌드 및 Lint/테스트 수행.</li>
-        <li><strong>관측 (Pre-Deploy):</strong> Actions가 <strong>현재 운영 버전</strong>의 성능(LCP, p95) 스냅샷 저장.</li>
-        <li><strong>배포:</strong> Actions가 <strong>EC2로</strong> 빌드 산출물(Artifact) 전송. (<strong>SSH/rsync</strong>)</li>
-        <li><strong>EC2 파이프라인:</strong> Repo1을 체크아웃한 뒤 <strong><code>npm install</code></strong>을 실행하고, PM2로 <strong>`npm run dev`</strong>를 백그라운드에 기동합니다(기본 프로세스명 `frontend-dev`). 정적 산출물을 사용하지 않는 모드이며 필요 시 환경변수로 명령/출력 디렉터리를 커스터마이즈할 수 있습니다.</li>
-        <li><strong>재시작:</strong> Actions가 <strong>EC2</strong>의 <code>pm2 reload all</code> 명령을 원격 실행 (무중단).</li>
-        <li><strong>헬스 체크:</strong> Actions가 <strong>새 버전</strong>의 <code>/healthz</code> 엔드포인트를 1분간 체크.</li>
-        <li><strong>관측 (Post-Deploy):</strong> Actions가 <strong>새 버전</strong>의 성능 스냅샷 저장.</li>
-        <li><strong>리포트:</strong> <strong>"배포 전/후 성능 비교표"</strong>를 <strong>GitHub Actions Summary</strong>에 자동 게시.</li>
-        <li><strong>자동 롤백:</strong> 배포 파이프라인이 <code>npm install</code> 또는 PM2 dev 기동 단계에서 실패하면, 서비스가 즉시 직전 성공 커밋으로 강제 롤백을 시도하고 결과를 메타데이터에 기록합니다.</li>
+        <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code> 엔드포인트를 호출한다.</li>
+        <li><strong>저장소 동기화:</strong> 서버 측에서 <code>git fetch → checkout/reset → clean</code> 순으로 Repo1 워킹 디렉터리를 최신화한다.</li>
+        <li><strong>빌드/재기동:</strong> <code>npm install</code> 후 PM2로 <code>npm run dev</code>를 백그라운드 실행한다(프로세스명 <code>frontend-dev</code>).</li>
+        <li><strong>컷오버:</strong> 정적 산출물이 존재하면 Nginx 심볼릭 링크를 새로운 Green 경로에 맞춰 스왑한다(Blue/Green 전환 고도화 예정).</li>
+        <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 요약해 팀원에게 공유한다.</li>
+        <li><strong>상태 모니터링:</strong> 클라이언트는 <code>/api/v1/status/{task_id}</code>로 진행 상황과 메타데이터를 폴링한다.</li>
+        <li><strong>자동 롤백:</strong> <code>npm install</code> 또는 PM2 단계에서 오류가 발생하면 직전 성공 커밋으로 자동 복구를 시도한다.</li>
     </ol>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🎯 핵심 데모 포인트 (심사위원 대상)</h3>
     <p>우리는 앱이 아닌, "배포 경험" 3가지를 시연합니다.</p>
     <ol>
         <li><strong>Nginx를 이용한 Blue/Green 배포:</strong> 버튼 하나로 트래픽을 즉시 전환/롤백하는 모습.</li>
-        <li><strong>"보이는 변화" 리포트:</strong> GitHub Summary에 자동으로 게시된 "배포 전/후 성능 비교 카드".</li>
+        <li><strong>변경 요약 프리뷰:</strong> Preview API가 Gemini 요약으로 변경 위험을 보여주는 모습.</li>
         <li><strong>자동 롤백:</strong> 헬스 체크 실패 시, 시스템이 자동으로 이전 버전으로 복귀하는 모습.</li>
     </ol>
 
@@ -98,9 +95,9 @@
 
     <h2 style="font-size: 24px; margin-top: 30px;">4. Q&A (주요 기능 설명)</h2>
 
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: "수동 배포 버튼"이 무엇인가요?</h4>
+    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 배포는 어떻게 시작하나요?</h4>
     <p style="margin: 0 0 15px 0;">
-        A: 우리가 만드는 버튼이 아니라, <strong>GitHub Actions의 <code>workflow_dispatch</code> 기능</strong>입니다. <code>.yml</code> 파일에 두 줄만 추가하면 "Actions" 탭에 <strong>"Run workflow" 버튼</strong>이 자동으로 생깁니다. 데모 시연 시 <code>push</code> 없이 이 버튼을 클릭해 배포를 시작합니다.
+        A: 운영자는 Cherry Deploy 백엔드의 <code>POST /api/v1/deploy</code> 엔드포인트를 호출하거나, 동일한 명령을 래핑한 스크립트를 통해 배포를 시작합니다. GitHub Actions와 같은 외부 오케스트레이터는 사용하지 않습니다.
     </p>
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 롤백은 어떻게 동작하나요?</h4>
     <p style="margin: 0 0 15px 0;">
@@ -117,16 +114,6 @@
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: Preview API는 어떤 정보를 주나요?</h4>
     <p style="margin: 0 0 15px 0;">
         A: 최신 성공 배포 대비 Git diff를 수집해 Gemini 2.5 Flash 모델로 요약한 변경 사항, 위험 요소, 테스트 권장 사항을 제공합니다. `GEMINI_API_KEY`가 설정돼 있어야 하며 모델은 `PREVIEW_LLM_MODEL`로 변경할 수 있습니다.
-    </p>
-
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: "관측 (Observability)"은 정확히 무엇을 하나요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: "배포 전/후의 보이는 변화"를 증명하는 것입니다. <strong>Lighthouse</strong>(프론트 성능)와 <strong>Autocannon</strong>(백엔드 부하)같은 도구로 배포 *전*의 성능(LCP, p95 지연시간)을 측정하고, 배포 *후*에 다시 측정해서 비교 리포트를 만듭니다.
-    </p>
-
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: "GitHub Actions Summary" 리포트는 무엇인가요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: <strong>각 Action 실행의 "결과 요약" 페이지</strong>입니다. GitHub에 영구적으로 기록됩니다. 위에서 측정한 "배포 전/후 성능 비교표"를 Markdown 테이블로 만들어 이 요약 페이지에 자동으로 게시, 배포 성과를 한눈에 볼 수 있게 합니다.
     </p>
 
 </div>

@@ -20,6 +20,42 @@ from settings import Settings
 logger = logging.getLogger("cherry-deploy.deploy")
 
 
+class AsyncReentrantLock:
+    """Minimal re-entrant asyncio lock used to serialize deploy pipelines."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: Optional[asyncio.Task[Any]] = None
+        self._depth = 0
+
+    async def acquire(self) -> None:
+        current = asyncio.current_task()
+        if current is None:
+            raise RuntimeError("AsyncReentrantLock requires a running task.")
+        if self._owner is current:
+            self._depth += 1
+            return
+        await self._lock.acquire()
+        self._owner = current
+        self._depth = 1
+
+    def release(self) -> None:
+        current = asyncio.current_task()
+        if current is None or self._owner is not current:
+            raise RuntimeError("AsyncReentrantLock released by non-owner task.")
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+
+    async def __aenter__(self) -> "AsyncReentrantLock":
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        self.release()
+
+
 class CommandExecutionError(RuntimeError):
     """Raised when a subprocess command fails."""
 
@@ -72,6 +108,7 @@ class DeployService:
         self.frontend_build_output_path = self._resolve_output_path(
             settings.frontend_build_output_subdir
         )
+        self._pipeline_lock = AsyncReentrantLock()
 
     def _resolve_frontend_path(self, subdir: str) -> Path:
         subdir = (subdir or "").strip()
@@ -211,89 +248,90 @@ class DeployService:
         target_commit: Optional[str] = None,
         force_push: bool = False,
     ) -> None:
-        logger.info(
-            "Starting deploy pipeline task=%s branch=%s target_commit=%s force_push=%s",
-            task_id,
-            branch,
-            target_commit,
-            force_push,
-        )
-        task_document = await self.repository.get_task(task_id)
-        action = (task_document.metadata.get("action") if task_document else None) or "deploy"
-        auto_recovery: Optional[Dict[str, Any]] = None
-
-        try:
-            await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CLONE)
-            clone_metadata = await self._run_clone_stage(
+        async with self._pipeline_lock:
+            logger.info(
+                "Starting deploy pipeline task=%s branch=%s target_commit=%s force_push=%s",
+                task_id,
                 branch,
-                target_commit=target_commit,
-                force_push=force_push,
+                target_commit,
+                force_push,
             )
-            await self._append_stage_metadata(task_id, DeployStatus.RUNNING_CLONE, clone_metadata)
+            task_document = await self.repository.get_task(task_id)
+            action = (task_document.metadata.get("action") if task_document else None) or "deploy"
+            auto_recovery: Optional[Dict[str, Any]] = None
 
-            await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_BUILD)
-            build_metadata = await self._run_build_stage()
-            await self._append_stage_metadata(task_id, DeployStatus.RUNNING_BUILD, build_metadata)
-
-            await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CUTOVER)
-            cutover_metadata = await self._run_cutover_stage()
-            await self._append_stage_metadata(task_id, DeployStatus.RUNNING_CUTOVER, cutover_metadata)
-
-            await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_OBSERVABILITY)
-            observability_metadata = await self._run_observability_stage()
-            await self._append_stage_metadata(
-                task_id,
-                DeployStatus.RUNNING_OBSERVABILITY,
-                observability_metadata,
-            )
-
-            await self.repository.mark_status(task_id, DeployStatus.COMPLETED)
-            summary_commit = await self._get_current_commit()
-            await self.repository.update_task(
-                task_id,
-                DeployTaskUpdate(
-                    append_metadata={
-                        "summary": {
-                            "completed_at": utc_now().isoformat(),
-                            "result": "success",
-                            "commit": summary_commit,
-                        }
-                    }
-                ),
-            )
-            logger.info("Deploy pipeline succeeded task=%s", task_id)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Deploy pipeline failed task=%s error=%s", task_id, exc)
-            await self.repository.mark_status(
-                task_id,
-                DeployStatus.FAILED,
-                error_log=str(exc),
-            )
-            failure_metadata: Dict[str, Any] = {
-                "timestamp": utc_now().isoformat(),
-                "error": str(exc),
-            }
-            if isinstance(exc, CommandExecutionError):
-                failure_metadata.update(
-                    {
-                        "command": " ".join(exc.command),
-                        "cwd": str(exc.cwd) if exc.cwd else None,
-                        "returncode": exc.returncode,
-                        "stdout": exc.stdout[-500:],
-                        "stderr": exc.stderr[-500:],
-                    }
+            try:
+                await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CLONE)
+                clone_metadata = await self._run_clone_stage(
+                    branch,
+                    target_commit=target_commit,
+                    force_push=force_push,
                 )
-                if action != "rollback" and self._is_auto_recoverable_command(exc.command):
-                    auto_recovery = await self._attempt_auto_rollback(branch)
-                    failure_metadata["auto_recovery"] = auto_recovery
-            elif action != "rollback":
-                failure_metadata["auto_recovery"] = {"status": "skipped", "reason": "non-command failure"}
-            await self.repository.update_task(
-                task_id,
-                DeployTaskUpdate(
-                    append_metadata={"failure_context": failure_metadata},
-                ),
-            )
+                await self._append_stage_metadata(task_id, DeployStatus.RUNNING_CLONE, clone_metadata)
+
+                await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_BUILD)
+                build_metadata = await self._run_build_stage()
+                await self._append_stage_metadata(task_id, DeployStatus.RUNNING_BUILD, build_metadata)
+
+                await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CUTOVER)
+                cutover_metadata = await self._run_cutover_stage()
+                await self._append_stage_metadata(task_id, DeployStatus.RUNNING_CUTOVER, cutover_metadata)
+
+                await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_OBSERVABILITY)
+                observability_metadata = await self._run_observability_stage()
+                await self._append_stage_metadata(
+                    task_id,
+                    DeployStatus.RUNNING_OBSERVABILITY,
+                    observability_metadata,
+                )
+
+                await self.repository.mark_status(task_id, DeployStatus.COMPLETED)
+                summary_commit = await self._get_current_commit()
+                await self.repository.update_task(
+                    task_id,
+                    DeployTaskUpdate(
+                        append_metadata={
+                            "summary": {
+                                "completed_at": utc_now().isoformat(),
+                                "result": "success",
+                                "commit": summary_commit,
+                            }
+                        }
+                    ),
+                )
+                logger.info("Deploy pipeline succeeded task=%s", task_id)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception("Deploy pipeline failed task=%s error=%s", task_id, exc)
+                await self.repository.mark_status(
+                    task_id,
+                    DeployStatus.FAILED,
+                    error_log=str(exc),
+                )
+                failure_metadata: Dict[str, Any] = {
+                    "timestamp": utc_now().isoformat(),
+                    "error": str(exc),
+                }
+                if isinstance(exc, CommandExecutionError):
+                    failure_metadata.update(
+                        {
+                            "command": " ".join(exc.command),
+                            "cwd": str(exc.cwd) if exc.cwd else None,
+                            "returncode": exc.returncode,
+                            "stdout": exc.stdout[-500:],
+                            "stderr": exc.stderr[-500:],
+                        }
+                    )
+                    if action != "rollback" and self._is_auto_recoverable_command(exc.command):
+                        auto_recovery = await self._attempt_auto_rollback(branch)
+                        failure_metadata["auto_recovery"] = auto_recovery
+                elif action != "rollback":
+                    failure_metadata["auto_recovery"] = {"status": "skipped", "reason": "non-command failure"}
+                await self.repository.update_task(
+                    task_id,
+                    DeployTaskUpdate(
+                        append_metadata={"failure_context": failure_metadata},
+                    ),
+                )
 
     async def _ensure_valid_transition(self, task_id: str, new_status: DeployStatus) -> None:
         document = await self.repository.get_task(task_id)
@@ -439,6 +477,7 @@ class DeployService:
             "output_path": str(self.frontend_build_output_path)
             if self.frontend_build_output_path
             else None,
+            "dry_run": self.dry_run,
             "steps": steps,
         }
 

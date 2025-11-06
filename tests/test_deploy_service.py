@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 import unittest
@@ -213,6 +214,48 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(RuntimeError):
             await self.service.prepare_rollback("deploy")
+
+    async def test_run_pipeline_serializes_concurrent_invocations(self) -> None:
+        request = DeployRequest(branch="deploy")
+        first = await self.service.create_task(branch=request.branch or "")
+        second = await self.service.create_task(branch=request.branch or "")
+
+        original_run_command = self.service._run_command
+
+        async def fake_run_command(command, *, cwd=None, description):  # type: ignore[override]
+            await asyncio.sleep(0.01)
+            return {
+                "description": description,
+                "command": " ".join(command),
+                "cwd": str(cwd) if cwd else None,
+                "dry_run": True,
+            }
+
+        self.service._run_command = fake_run_command  # type: ignore[assignment]
+
+        order: list[str] = []
+
+        async def invoke(task_id: str, label: str) -> None:
+            order.append(f"{label}_start")
+            await self.service.run_pipeline(task_id, request.branch or "")
+            order.append(f"{label}_end")
+
+        try:
+            await asyncio.gather(
+                invoke(first.task_id, "t1"),
+                invoke(second.task_id, "t2"),
+            )
+        finally:
+            self.service._run_command = original_run_command  # type: ignore[assignment]
+
+        self.assertEqual(order, ["t1_start", "t2_start", "t1_end", "t2_end"])
+
+        stored_first = await self.repository.get_task(first.task_id)
+        stored_second = await self.repository.get_task(second.task_id)
+        assert stored_first is not None
+        assert stored_second is not None
+        self.assertEqual(stored_first.status, DeployStatus.COMPLETED)
+        self.assertEqual(stored_second.status, DeployStatus.COMPLETED)
 
 
 def _merge_metadata(base: dict, extra: dict) -> None:

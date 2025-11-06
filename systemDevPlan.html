@@ -100,17 +100,11 @@
         <li><strong><code>deploy_tasks</code> (배포 작업 관리)</strong>
             <ul>
                 <li><code>task_id</code> (string, Pkey): UUID</li>
-                <li><code>status</code> (string: "pending", "running_clone", "running_build", "running_cutover", "running_observability", "completed", "failed")</li>
+                <li><code>status</code> (string: "pending", "running_clone", "running_build", "running_cutover", "<strong>running_observability</strong>"(Preview 요약 단계), "completed", "failed")</li>
                 <li><code>started_at</code> (datetime)</li>
                 <li><code>completed_at</code> (datetime)</li>
                 <li><code>error_log</code> (string)</li>
                 <li><code>metadata</code> (object): 브랜치 정보 및 각 단계별 메타데이터</li>
-            </ul>
-        </li>
-        <li><strong><code>deploy_reports</code> (배포 결과 리포트)</strong>
-            <ul>
-                <li><code>report_id</code> (string, Pkey, Foreign key to <code>task_id</code>)</li>
-                <li>... (성능 지표) ...</li>
             </ul>
         </li>
     </ol>
@@ -147,7 +141,7 @@
                 <li>현재 기본 모드는 개발 서버를 사용하는 관계로 컷오버 단계를 건너뜁니다. 정적 산출물이 필요한 경우 환경변수로 출력 디렉터리를 지정하면 이 단계가 활성화됩니다.</li>
             </ul>
         </li>
-        <li><strong>DB 상태 "running_observability":</strong> <code>lighthouse</code> 등을 실행, 성능을 측정하여 DB에 저장합니다.</li>
+        <li><strong>DB 상태 "running_observability":</strong> Preview API가 git diff를 수집하고 Gemini 2.5 Flash로 요약을 생성합니다.</li>
         <li><strong>DB 상태 "completed":</strong> 이전 'Blue' 환경을 정리하고 작업을 종료합니다.</li>
         <li><strong>실패 처리:</strong> <code>npm install</code> 또는 PM2 dev 기동 단계에서 실패하면 서비스가 즉시 직전 성공 배포 커밋으로 자동 롤백을 시도하고, 결과를 원본 Task 메타데이터의 <code>failure_context.auto_recovery</code>에 기록합니다.</li>
     </ol>
