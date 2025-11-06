@@ -23,7 +23,6 @@ export default function RootLayout({
         <div className="flex flex-col flex-1 overflow-y-auto">
           <Header />
           <main className="flex-1 p-6">{children}</main>
-          <Character />
         </div>
       </body>
     </html>

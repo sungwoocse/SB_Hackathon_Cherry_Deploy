@@ -1,108 +1,135 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import Character from "./Character";
 
 export default function ChatWidget() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([
+  const [status, setStatus] = useState<"idle" | "talking" | "success" | "failed">("idle");
+  const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([
     { sender: "bot", text: "안녕하세요! 무엇을 도와드릴까요?" },
   ]);
   const [input, setInput] = useState("");
-  const chatEndRef = useRef<HTMLDivElement | null>(null); // ✅ 타입 지정으로 scrollIntoView 빨간줄 제거
+  const [open, setOpen] = useState(true); // 팝업 토글
+  const endRef = useRef<HTMLDivElement | null>(null);
 
-  // 메시지 변경 시 스크롤 하단 이동
+  // ✅ 새 메시지마다 하단으로 스크롤
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, open]);
 
-  // 메시지 전송
-  const sendMessage = () => {
-    if (!input.trim()) return;
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text) return;
 
-    const newMessage = { sender: "user", text: input.trim() };
-    setMessages((prev) => [...prev, newMessage]);
+    // 사용자 메시지
+    setMessages((prev) => [...prev, { sender: "user", text }]);
     setInput("");
+    setStatus("talking");
 
+    // 데모 응답 (Gemini 연동 전 임시)
     setTimeout(() => {
       setMessages((prev) => [
         ...prev,
-        { sender: "bot", text: "좋은 질문이에요! 잠시만요... 🤖" },
+        { sender: "bot", text: "Gemini 연결 준비 완료 상태입니다." },
       ]);
-    }, 500);
-  };
-
-  // Enter 키로 전송
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") sendMessage();
+      setStatus("success");
+      setTimeout(() => setStatus("idle"), 1200);
+    }, 900);
   };
 
   return (
     <>
-      {/* 💬 Floating Button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-blue-500 text-white text-3xl shadow-lg hover:bg-blue-600 transition-all duration-300 flex items-center justify-center z-50"
-      >
-        💬
-      </button>
+      {/* ✅ 캐릭터 (왼쪽 하단 고정, 상태 유지) */}
+      <Character status={status} />
 
-      {/* 💬 Chat Window */}
-      {isOpen && (
-        <div className="fixed bottom-24 right-6 w-80 bg-[#1e293b] text-white rounded-xl shadow-2xl border border-gray-700 overflow-hidden z-40 animate-fade-in">
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 bg-[#0f172a] border-b border-gray-700">
-            <h3 className="text-lg font-semibold text-blue-400">🤖 Chatbot</h3>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="text-gray-400 hover:text-gray-200"
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Messages */}
-          <div className="p-4 h-64 overflow-y-auto text-sm leading-relaxed space-y-3">
-            {messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex ${
-                  msg.sender === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  className={`px-3 py-2 rounded-lg max-w-[75%] ${
-                    msg.sender === "user"
-                      ? "bg-blue-500 text-white"
-                      : "bg-gray-700 text-gray-200"
-                  }`}
-                >
-                  {msg.text}
-                </div>
+      {/* ✅ 우측 하단 챗봇 팝업 (디자인 복원) */}
+      <div className="fixed bottom-6 right-6 z-[9999] pointer-events-auto select-none">
+        {open ? (
+          <div className="w-80 h-100 rounded-xl shadow-2xl border border-[#2c3d55] overflow-hidden animate-fade-in">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-2 bg-[#223145] text-blue-200 border-b border-[#2c3d55]">
+              <div className="font-semibold flex items-center gap-2">
+                <span className="text-lg">🤖</span>
+                <span>Chatbot</span>
               </div>
-            ))}
-            <div ref={chatEndRef} />
-          </div>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-gray-300 hover:text-white transition"
+                aria-label="닫기"
+              >
+                ✕
+              </button>
+            </div>
+{/* Body */}
+<div className="h-[calc(24rem-2.5rem-3.25rem)] bg-[#1e2a3a] text-white p-3 overflow-y-auto space-y-2">
+  {messages.map((m, i) => (
+    <div
+      key={i}
+      className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"} w-full`}
+    >
+      <div
+        className={`px-3 py-2 text-sm rounded-2xl leading-5 shadow-sm break-words 
+          ${m.sender === "user"
+            ? "bg-[#2563eb] text-white"
+            : "bg-[#2b3b52] text-gray-200"}
+        `}
+        style={{
+          width: "fit-content",
+          maxWidth: "75%",
+          wordBreak: "break-word",
+        }}
+      >
+        {m.text}
+      </div>
+    </div>
+  ))}
+  <div ref={endRef} />
+</div>
 
-          {/* Input */}
-          <div className="p-3 border-t border-gray-700 flex">
-            <input
-              type="text"
-              value={input}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setInput(e.target.value)
-              } // ✅ e 타입 명시로 빨간줄 제거
-              onKeyDown={handleKeyDown}
-              placeholder="메시지를 입력하세요..."
-              className="flex-1 p-2 rounded-md bg-gray-800 text-gray-200 text-sm focus:outline-none"
-            />
-            <button
-              onClick={sendMessage}
-              className="ml-2 px-4 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm"
-            >
-              전송
-            </button>
+
+            {/* Input */}
+            <div className="bg-[#1b2736] border-t border-[#2c3d55] p-3 flex items-center gap-2">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                placeholder="메시지를 입력하세요..."
+                className="flex-1 bg-[#111a26] text-sm text-gray-100 px-3 py-2 rounded-md outline-none ring-0 focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400"
+              />
+              <button
+                onClick={handleSend}
+                className="px-3 py-2 text-sm rounded-md bg-blue-600 hover:bg-blue-700 text-white transition shadow"
+              >
+                전송
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          // 토글 버튼 (닫힌 상태)
+          <button
+            onClick={() => setOpen(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full shadow-lg transition"
+          >
+            💬 Chat
+          </button>
+        )}
+      </div>
+
+      {/* fade-in 애니메이션 */}
+      <style jsx>{`
+        @keyframes fade-in {
+          from {
+            opacity: 0;
+            transform: translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fade-in {
+          animation: fade-in 0.25s ease-out;
+        }
+      `}</style>
     </>
   );
 }

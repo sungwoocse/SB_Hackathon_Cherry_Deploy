@@ -2,10 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import Lottie from "lottie-react";
-import deployingAnim from "../../public/lottie/deploying.json";
-import successAnim from "../../public/lottie/success.json";
-import failedAnim from "../../public/lottie/failed.json";
 import ChatWidget from "./components/ChatWidget";
 
 interface DeployData {
@@ -13,6 +9,11 @@ interface DeployData {
   cost?: number;
   risk?: string;
   timestamp?: string;
+  greenBlue?: {
+    active: "green" | "blue";
+    blueVersion?: string;
+    greenVersion?: string;
+  };
 }
 
 export default function Page() {
@@ -32,7 +33,6 @@ export default function Page() {
       });
   }, []);
 
-  // 로딩 상태
   if (loading) {
     return (
       <motion.div
@@ -45,7 +45,6 @@ export default function Page() {
     );
   }
 
-  // 데이터 없음
   if (!data) {
     return (
       <motion.div
@@ -58,7 +57,6 @@ export default function Page() {
     );
   }
 
-  // 상태별 색상
   const statusColor =
     data.status === "success"
       ? "text-green-400"
@@ -73,7 +71,11 @@ export default function Page() {
       ? "text-red-400"
       : "text-yellow-400";
 
-  // 카드 애니메이션 옵션
+  const gbColor =
+    data.greenBlue?.active === "green"
+      ? "text-green-400"
+      : "text-blue-400";
+
   const cardVariants = {
     hidden: { opacity: 0, y: 20 },
     visible: (i: number) => ({
@@ -83,18 +85,6 @@ export default function Page() {
     }),
   };
 
-  // Lottie 상태 매핑
-  const getAnimation = () => {
-    switch (data.status) {
-      case "success":
-        return successAnim;
-      case "failed":
-        return failedAnim;
-      default:
-        return deployingAnim;
-    }
-  };
-
   return (
     <motion.div
       className="text-gray-200 p-8 min-h-screen bg-gray-900"
@@ -102,7 +92,6 @@ export default function Page() {
       animate={{ opacity: 1 }}
       transition={{ duration: 0.6 }}
     >
-      {/* 페이지 헤더 */}
       <motion.h2
         className="text-3xl font-bold mb-4 text-blue-400"
         initial={{ y: -20, opacity: 0 }}
@@ -112,7 +101,6 @@ export default function Page() {
         Dashboard Overview
       </motion.h2>
 
-      {/* 최근 업데이트 */}
       <motion.p
         className="text-gray-400 mb-8"
         initial={{ opacity: 0 }}
@@ -127,17 +115,7 @@ export default function Page() {
         </span>
       </motion.p>
 
-      {/* Lottie 배포 상태 */}
-      <div className="flex items-center justify-center mb-8">
-        <Lottie
-          animationData={getAnimation()}
-          loop
-          style={{ height: 180, width: 180 }}
-        />
-      </div>
-
-      {/* 주요 지표 카드 */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-4 gap-6">
         {[
           {
             title: "📦 배포 상태",
@@ -153,6 +131,12 @@ export default function Page() {
             title: "⚙️ 리스크 수준",
             value: data.risk?.toUpperCase() || "N/A",
             color: riskColor,
+          },
+          {
+            title: "🟢 Green/Blue 상태",
+            value: `${data.greenBlue?.active?.toUpperCase() || "N/A"} 
+                    (${data.greenBlue?.greenVersion || ""} / ${data.greenBlue?.blueVersion || ""})`,
+            color: gbColor,
           },
         ].map((card, i) => (
           <motion.div
@@ -171,7 +155,6 @@ export default function Page() {
         ))}
       </div>
 
-      {/* 👇 챗봇 위젯 */}
       <ChatWidget />
     </motion.div>
   );
