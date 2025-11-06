@@ -197,12 +197,23 @@ components:
           nullable: true
     DeployPreviewResponse:
       type: object
-      required: [current_branch, target_repo, commands, risk_assessment, cost_estimate]
+      required:
+        - current_branch
+        - target_repo
+        - commands
+        - risk_assessment
+        - cost_estimate
       properties:
         current_branch:
           type: string
         target_repo:
           type: string
+        frontend_project_path:
+          type: string
+          nullable: true
+        frontend_output_path:
+          type: string
+          nullable: true
         commands:
           type: array
           items:
@@ -212,13 +223,18 @@ components:
             - "git checkout -B deploy origin/deploy"
             - "git reset --hard origin/deploy"
             - "git clean -fdx"
-            - "npm run build"
-            - "sync static assets to nginx green path"
+            - "npm install"
+            - "bash -lc pm2 delete frontend-dev 2>/dev/null || true; pm2 start npm --name frontend-dev -- run dev -- --hostname 0.0.0.0 --port 3000"
+            - "no static cutover (dev-server mode)"
         risk_assessment:
           type: object
           additionalProperties: true
         cost_estimate:
           type: object
+          additionalProperties: true
+        llm_preview:
+          type: object
+          nullable: true
           additionalProperties: true
     RollbackRequest:
       type: object

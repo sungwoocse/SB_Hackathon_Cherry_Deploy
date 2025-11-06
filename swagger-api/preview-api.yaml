@@ -65,6 +65,14 @@ components:
         target_repo:
           type: string
           description: Filesystem path of the frontend repository.
+        frontend_project_path:
+          type: string
+          description: Absolute path to the frontend project used for builds.
+          nullable: true
+        frontend_output_path:
+          type: string
+          description: Build artifact directory (absent for dev-server mode).
+          nullable: true
         commands:
           type: array
           items:
@@ -78,3 +86,8 @@ components:
           type: object
           additionalProperties: true
           description: Rough execution cost/time details.
+        llm_preview:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Gemini-generated summary of upcoming deploy changes (includes status, diff snippet, and response text).

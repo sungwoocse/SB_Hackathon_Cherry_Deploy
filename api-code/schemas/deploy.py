@@ -37,9 +37,20 @@ class DeployStatusResponse(BaseModel):
 class DeployPreviewResponse(BaseModel):
     current_branch: str = Field(..., description="Default branch targeted for deploy operations.")
     target_repo: str = Field(..., description="Filesystem path of the frontend repository.")
+    frontend_project_path: Optional[str] = Field(
+        default=None, description="Absolute path to the frontend project used for builds."
+    )
+    frontend_output_path: Optional[str] = Field(
+        default=None,
+        description="Absolute path of the generated artifacts (if any). Absent in dev-server mode.",
+    )
     commands: list[str] = Field(..., description="Ordered commands executed during deploy.")
     risk_assessment: Dict[str, Any] = Field(..., description="Plain-language risk summary.")
     cost_estimate: Dict[str, Any] = Field(..., description="Rough execution cost/time details.")
+    llm_preview: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Gemini-generated summary of the upcoming deploy diff. Contains status, diff snippet, and response text when available.",
+    )
 
 
 class RollbackRequest(BaseModel):
