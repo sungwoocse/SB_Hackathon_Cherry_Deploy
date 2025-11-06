@@ -4,9 +4,12 @@ import asyncio
 import logging
 import shlex
 import shutil
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
+
+import google.generativeai as genai
 
 from domain import DeployStatus, is_valid_transition
 from models import DeployTask, DeployTaskCreate, DeployTaskUpdate, utc_now
@@ -15,6 +18,26 @@ from settings import Settings
 
 
 logger = logging.getLogger("cherry-deploy.deploy")
+
+
+class CommandExecutionError(RuntimeError):
+    """Raised when a subprocess command fails."""
+
+    def __init__(
+        self,
+        command: list[str],
+        cwd: Optional[Path],
+        returncode: int,
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        self.command = command
+        self.cwd = cwd
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        message = stderr or stdout or f"return code {returncode}"
+        super().__init__(f"command failed ({' '.join(command)}): {message}")
 
 
 class DeployService:
@@ -195,6 +218,10 @@ class DeployService:
             target_commit,
             force_push,
         )
+        task_document = await self.repository.get_task(task_id)
+        action = (task_document.metadata.get("action") if task_document else None) or "deploy"
+        auto_recovery: Optional[Dict[str, Any]] = None
+
         try:
             await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CLONE)
             clone_metadata = await self._run_clone_stage(
@@ -241,6 +268,31 @@ class DeployService:
                 task_id,
                 DeployStatus.FAILED,
                 error_log=str(exc),
+            )
+            failure_metadata: Dict[str, Any] = {
+                "timestamp": utc_now().isoformat(),
+                "error": str(exc),
+            }
+            if isinstance(exc, CommandExecutionError):
+                failure_metadata.update(
+                    {
+                        "command": " ".join(exc.command),
+                        "cwd": str(exc.cwd) if exc.cwd else None,
+                        "returncode": exc.returncode,
+                        "stdout": exc.stdout[-500:],
+                        "stderr": exc.stderr[-500:],
+                    }
+                )
+                if action != "rollback" and self._is_auto_recoverable_command(exc.command):
+                    auto_recovery = await self._attempt_auto_rollback(branch)
+                    failure_metadata["auto_recovery"] = auto_recovery
+            elif action != "rollback":
+                failure_metadata["auto_recovery"] = {"status": "skipped", "reason": "non-command failure"}
+            await self.repository.update_task(
+                task_id,
+                DeployTaskUpdate(
+                    append_metadata={"failure_context": failure_metadata},
+                ),
             )
 
     async def _ensure_valid_transition(self, task_id: str, new_status: DeployStatus) -> None:
@@ -384,7 +436,9 @@ class DeployService:
 
         return {
             "project_path": str(self.frontend_project_path),
-            "output_path": str(self.frontend_build_output_path) if self.frontend_build_output_path else None,
+            "output_path": str(self.frontend_build_output_path)
+            if self.frontend_build_output_path
+            else None,
             "steps": steps,
         }
 
@@ -467,6 +521,8 @@ class DeployService:
         else:
             command_plan.append("no static cutover (dev-server mode)")
 
+        llm_preview = await self._generate_llm_preview()
+
         return {
             "current_branch": self.default_branch,
             "target_repo": str(self.chatbot_repo_path),
@@ -485,6 +541,7 @@ class DeployService:
                 "npm_dependencies": "No extra cost",
                 "lighthouse_tokens": "N/A",
             },
+            "llm_preview": llm_preview,
         }
 
     async def _run_command(
@@ -520,8 +577,176 @@ class DeployService:
         metadata["returncode"] = process.returncode
 
         if process.returncode != 0:
-            raise RuntimeError(
-                f"command failed ({metadata['command']}): {metadata['stderr'] or metadata['stdout']}"
+            raise CommandExecutionError(
+                command=command,
+                cwd=cwd,
+                returncode=process.returncode,
+                stdout=metadata["stdout"],
+                stderr=metadata["stderr"],
             )
 
         return metadata
+
+    def _is_auto_recoverable_command(self, command: list[str]) -> bool:
+        if not command:
+            return False
+        first = command[0]
+        if first == "npm" and len(command) >= 2 and command[1] in {"install", "ci"}:
+            return True
+        if first == "bash" and any("pm2 start npm" in part for part in command if isinstance(part, str)):
+            return True
+        if first == "pm2" and len(command) > 1 and command[1] == "start":
+            return True
+        return False
+
+    async def _attempt_auto_rollback(self, branch: str) -> Dict[str, Any]:
+        logger.warning("Attempting automatic rollback for branch=%s", branch)
+        try:
+            task, target_commit, current_commit, branch_value = await self.prepare_rollback(branch)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Auto rollback skipped (prepare failed): %s", exc)
+            return {
+                "status": "skipped",
+                "reason": str(exc),
+            }
+
+        try:
+            await self.perform_rollback(task.task_id, branch_value, target_commit, current_commit)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Auto rollback execution failed task=%s error=%s", task.task_id, exc)
+            return {
+                "status": "failed",
+                "rollback_task_id": task.task_id,
+                "error": str(exc),
+            }
+
+        logger.info(
+            "Auto rollback succeeded task=%s rolled_back_to=%s", task.task_id, target_commit
+        )
+        return {
+            "status": "completed",
+            "rollback_task_id": task.task_id,
+            "rolled_back_to": target_commit,
+        }
+
+    async def _generate_llm_preview(self) -> Dict[str, Any]:
+        if not self.settings.gemini_api_key:
+            return {
+                "status": "skipped",
+                "reason": "Gemini API key not configured.",
+            }
+
+        try:
+            successes = await self.repository.get_recent_successes(
+                branch=self.default_branch,
+                limit=1,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Failed to fetch recent successes for preview: %s", exc)
+            return {
+                "status": "skipped",
+                "reason": f"Unable to read deploy history: {exc}",
+            }
+
+        base_commit: Optional[str] = None
+        if successes:
+            summary = successes[0].metadata.get("summary")
+            if isinstance(summary, dict):
+                base_commit = summary.get("commit")
+
+        if not base_commit:
+            return {
+                "status": "skipped",
+                "reason": "No previous successful deployment to diff against.",
+            }
+
+        head_commit_meta = await self._run_command(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.chatbot_repo_path,
+            description="Resolve current commit SHA for preview",
+        )
+        head_commit = head_commit_meta["stdout"].strip()
+        if head_commit == base_commit:
+            return {
+                "status": "skipped",
+                "reason": "Working tree matches last successful deployment.",
+            }
+
+        diff_command = self.settings.preview_diff_command.format(base_commit=base_commit)
+        diff_args = shlex.split(diff_command)
+        diff_result = await self._run_command(
+            diff_args,
+            cwd=self.chatbot_repo_path,
+            description="Collect diff summary for preview",
+        )
+        diff_output = diff_result.get("stdout", "").strip()
+        if len(diff_output) > self.settings.preview_diff_max_chars:
+            diff_output = diff_output[: self.settings.preview_diff_max_chars] + "\n… (truncated)"
+
+        prompt = textwrap.dedent(
+            f"""
+            You are an expert release engineer. Summarize the upcoming deployment changes for a teammate.
+
+            Branch: {self.default_branch}
+            Base commit (last successful deploy): {base_commit}
+            Target commit (current HEAD): {head_commit}
+
+            Git diff (name-status):
+            {diff_output or '(no file changes listed)'}
+
+            Provide:
+            1. Key functional changes inferred from filenames/paths.
+            2. Potential risk areas or components to smoke-test.
+            3. Any follow-up questions or clarifications to raise with the author.
+            Keep it concise and readable in Markdown bullet format.
+            """
+        ).strip()
+
+        llm_payload: Dict[str, Any] = {
+            "status": "skipped",
+            "reason": "Gemini call not attempted.",
+            "model": self.settings.preview_llm_model,
+            "base_commit": base_commit,
+            "target_commit": head_commit,
+            "diff_snippet": diff_output,
+        }
+
+        try:
+            summary_text = await asyncio.to_thread(self._call_gemini, prompt)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Gemini preview generation failed: %s", exc)
+            llm_payload.update(
+                {
+                    "status": "failed",
+                    "reason": str(exc),
+                }
+            )
+            return llm_payload
+
+        llm_payload.update(
+            {
+                "status": "completed",
+                "response": summary_text.strip(),
+            }
+        )
+        return llm_payload
+
+    def _call_gemini(self, prompt: str) -> str:
+        genai.configure(api_key=self.settings.gemini_api_key)
+        model = genai.GenerativeModel(self.settings.preview_llm_model)
+        response = model.generate_content(prompt)
+        if hasattr(response, "text") and response.text:
+            return response.text
+        if getattr(response, "candidates", None):
+            parts: list[str] = []
+            for candidate in response.candidates:
+                content = getattr(candidate, "content", None)
+                if not content:
+                    continue
+                for part in getattr(content, "parts", []):
+                    text = getattr(part, "text", None)
+                    if text:
+                        parts.append(text)
+            if parts:
+                return "\n".join(parts)
+        return "LLM did not return any content."

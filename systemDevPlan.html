@@ -149,6 +149,7 @@
         </li>
         <li><strong>DB 상태 "running_observability":</strong> <code>lighthouse</code> 등을 실행, 성능을 측정하여 DB에 저장합니다.</li>
         <li><strong>DB 상태 "completed":</strong> 이전 'Blue' 환경을 정리하고 작업을 종료합니다.</li>
+        <li><strong>실패 처리:</strong> <code>npm install</code> 또는 PM2 dev 기동 단계에서 실패하면 서비스가 즉시 직전 성공 배포 커밋으로 자동 롤백을 시도하고, 결과를 원본 Task 메타데이터의 <code>failure_context.auto_recovery</code>에 기록합니다.</li>
     </ol>
     <p style="font-size: 16px; color: #555;">※ 현재 기본값은 <code>DEPLOY_DRY_RUN=false</code>라서 위 명령들이 실제 실행됩니다. 테스트 목적으로 시뮬레이션만 원하면 PM2/환경변수에서 <code>DEPLOY_DRY_RUN=true</code>로 설정한 뒤 재시작하세요.</p>
     
@@ -191,6 +192,7 @@
         </li>
         <li><strong>결과:</strong> <code>/api/v1/status/{task_id}</code>로 롤백 진행 상황과 <code>rolled_back_from/rolled_back_to</code> 메타데이터를 확인.</li>
         <li><strong>주의:</strong> Repo1 <code>deploy</code> 브랜치에는 배포 대상인 <code>frontend/my-dashboard</code>만 포함시키고, 기타 디렉터리는 별도 브랜치로 관리하세요.</li>
+        <li><strong>Preview:</strong> <code>GET /api/v1/preview</code>는 최근 성공 배포 대비 Git diff를 Gemini 2.5 Flash 모델로 요약해 변경 점검 노트를 제공합니다.</li>
     </ul>
 
 </div>

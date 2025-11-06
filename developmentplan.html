@@ -83,6 +83,7 @@
         <li><strong>헬스 체크:</strong> Actions가 <strong>새 버전</strong>의 <code>/healthz</code> 엔드포인트를 1분간 체크.</li>
         <li><strong>관측 (Post-Deploy):</strong> Actions가 <strong>새 버전</strong>의 성능 스냅샷 저장.</li>
         <li><strong>리포트:</strong> <strong>"배포 전/후 성능 비교표"</strong>를 <strong>GitHub Actions Summary</strong>에 자동 게시.</li>
+        <li><strong>자동 롤백:</strong> 배포 파이프라인이 <code>npm install</code> 또는 PM2 dev 기동 단계에서 실패하면, 서비스가 즉시 직전 성공 커밋으로 강제 롤백을 시도하고 결과를 메타데이터에 기록합니다.</li>
     </ol>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🎯 핵심 데모 포인트 (심사위원 대상)</h3>
@@ -113,6 +114,10 @@
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 테스트 모드(드라이런)와 실제 배포 모드는 어떻게 전환하나요?</h4>
     <p style="margin: 0 0 15px 0;">
         A: 기본값은 실제 명령 실행(<code>DEPLOY_DRY_RUN=false</code>)입니다. 시뮬레이션만 원하면 PM2를 재시작하기 전에 환경변수 <code>DEPLOY_DRY_RUN=true</code>를 설정하세요. MongoDB는 프로젝트 루트의 <code>./mongodb</code>, 데이터는 <code>./mongodb-data</code>에 위치합니다. 실제 배포 모드에서는 <code>git fetch → git checkout -B ... → git reset --hard → git clean -fdx → npm install</code> 순으로 Repo1 워킹 디렉터리를 교체한 뒤 PM2 `npm run dev` 명령을 실행합니다.</p>
+    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: Preview API는 어떤 정보를 주나요?</h4>
+    <p style="margin: 0 0 15px 0;">
+        A: 최신 성공 배포 대비 Git diff를 수집해 Gemini 2.5 Flash 모델로 요약한 변경 사항, 위험 요소, 테스트 권장 사항을 제공합니다. `GEMINI_API_KEY`가 설정돼 있어야 하며 모델은 `PREVIEW_LLM_MODEL`로 변경할 수 있습니다.
+    </p>
 
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: "관측 (Observability)"은 정확히 무엇을 하나요?</h4>
     <p style="margin: 0 0 15px 0;">

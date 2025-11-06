@@ -89,6 +89,21 @@ class Settings(BaseModel):
             "after build/export."
         ),
     )
+    preview_llm_model: str = Field(
+        default="gemini-2.5-flash",
+        alias="PREVIEW_LLM_MODEL",
+        description="Generative model used to summarize upcoming deploy diffs.",
+    )
+    preview_diff_command: str = Field(
+        default="git diff --name-status {base_commit}..HEAD",
+        alias="PREVIEW_DIFF_COMMAND",
+        description="Command template to summarize upcoming changes for LLM preview.",
+    )
+    preview_diff_max_chars: int = Field(
+        default=4000,
+        alias="PREVIEW_DIFF_MAX_CHARS",
+        description="Maximum number of diff characters supplied to the preview LLM.",
+    )
 
     model_config = {"populate_by_name": True}
 
