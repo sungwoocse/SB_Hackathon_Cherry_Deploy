@@ -91,6 +91,12 @@ paths:
     get:
       summary: Describe upcoming deploy steps, risks, and costs
       tags: [deploy]
+      parameters:
+        - in: query
+          name: task_id
+          schema:
+            type: string
+          description: Optional task identifier to align the preview timeline with a specific run.
       responses:
         '200':
           description: Static preview payload showing operational context.
@@ -127,20 +133,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/recent:
+    get:
+      summary: List recent deploy/rollback tasks
+      tags: [deploy]
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+          description: Maximum number of recent tasks to return (clamped to 20).
+      responses:
+        '200':
+          description: Recent tasks ordered by start time (newest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeployTaskSummary'
+  /api/v1/tasks/{task_id}/logs:
+    get:
+      summary: Detailed stdout/stderr metadata for a specific task
+      tags: [deploy]
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task metadata with captured stdout/stderr snippets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployTaskLogResponse'
+        '404':
+          description: Task not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /healthz:
     get:
       summary: Liveness probe
       tags: [system]
       responses:
         '200':
-          description: Service alive indicator.
+          description: Service alive indicator including PM2 and Mongo checks.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
+                $ref: '#/components/schemas/HealthStatusResponse'
 components:
   schemas:
     ChatRequest:
@@ -168,15 +216,42 @@ components:
           example: deploy
     DeployResponse:
       type: object
-      required: [task_id, status]
+      required:
+        - task_id
+        - status
+        - branch
+        - action
+        - queued_at
+        - estimated_duration_minutes
+        - context
+        - dev_server_restart_planned
       properties:
         task_id:
           type: string
         status:
           $ref: '#/components/schemas/DeployStatusEnum'
+        branch:
+          type: string
+          description: Branch resolved for this deployment or rollback.
+        action:
+          type: string
+          enum: [deploy, rollback]
+        queued_at:
+          type: string
+          format: date-time
+        estimated_duration_minutes:
+          type: integer
+          minimum: 1
+          description: Rough ETA derived from diff statistics.
+        context:
+          type: object
+          additionalProperties: true
+        dev_server_restart_planned:
+          type: boolean
+          description: True when the pipeline restarts the long-running dev server instead of copying static assets.
     DeployStatusResponse:
       type: object
-      required: [task_id, status, metadata, started_at]
+      required: [task_id, status, metadata, stages, started_at]
       properties:
         task_id:
           type: string
@@ -185,6 +260,11 @@ components:
         metadata:
           type: object
           additionalProperties: true
+        stages:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
         started_at:
           type: string
           format: date-time
@@ -195,6 +275,10 @@ components:
         error_log:
           type: string
           nullable: true
+        failure_context:
+          type: object
+          nullable: true
+          additionalProperties: true
     DeployPreviewResponse:
       type: object
       required:
@@ -203,6 +287,8 @@ components:
         - commands
         - risk_assessment
         - cost_estimate
+        - timeline_preview
+        - warnings
       properties:
         current_branch:
           type: string
@@ -236,6 +322,17 @@ components:
           type: object
           nullable: true
           additionalProperties: true
+        timeline_preview:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployTimelineEntry'
+        warnings:
+          type: array
+          items:
+            type: string
+        task_context:
+          $ref: '#/components/schemas/DeployTaskSummary'
+          nullable: true
     RollbackRequest:
       type: object
       properties:
@@ -259,3 +356,106 @@ components:
       properties:
         detail:
           type: string
+    DeployTimelineEntry:
+      type: object
+      required: [stage, label, completed]
+      properties:
+        stage:
+          $ref: '#/components/schemas/DeployStatusEnum'
+        label:
+          type: string
+        expected_seconds:
+          type: integer
+          minimum: 0
+          nullable: true
+        completed:
+          type: boolean
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+    DeployTaskSummary:
+      type: object
+      required:
+        - task_id
+        - status
+        - branch
+        - action
+        - started_at
+      properties:
+        task_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/DeployStatusEnum'
+        branch:
+          type: string
+        action:
+          type: string
+          description: Operation type (deploy or rollback).
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        summary:
+          type: object
+          nullable: true
+          additionalProperties: true
+        failure_context:
+          type: object
+          nullable: true
+          additionalProperties: true
+    DeployTaskLogResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - stages
+        - metadata
+      properties:
+        task_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/DeployStatusEnum'
+        stages:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        error_log:
+          type: string
+          nullable: true
+        failure_context:
+          type: object
+          nullable: true
+          additionalProperties: true
+    HealthStatusResponse:
+      type: object
+      required: [status, pm2_processes, mongo, issues]
+      properties:
+        status:
+          type: string
+          description: "healthy when all checks pass, otherwise degraded."
+        pm2_processes:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of PM2 process names to their states.
+        mongo:
+          type: string
+          description: Result of the MongoDB ping command.
+        last_task_id:
+          type: string
+          nullable: true
+        last_task_status:
+          $ref: '#/components/schemas/DeployStatusEnum'
+          nullable: true
+        issues:
+          type: array
+          items:
+            type: string
