@@ -75,6 +75,14 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
 
         stages = deploy_service.build_stage_snapshot(task.metadata)
         failure_context = task.metadata.get("failure_context")
+        raw_summary = task.metadata.get("summary")
+        summary_meta = raw_summary if isinstance(raw_summary, dict) else {}
+        raw_preflight = summary_meta.get("preflight")
+        preflight_meta = raw_preflight if isinstance(raw_preflight, dict) else {}
+        cost_estimate = preflight_meta.get("cost_estimate")
+        risk_assessment = preflight_meta.get("risk_assessment")
+        llm_preview = preflight_meta.get("llm_preview")
+        blue_green_plan = await deploy_service.describe_blue_green_state()
 
         return DeployStatusResponse(
             task_id=task.task_id,
@@ -85,6 +93,10 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
             completed_at=task.completed_at,
             error_log=task.error_log,
             failure_context=failure_context,
+            cost_estimate=cost_estimate,
+            risk_assessment=risk_assessment,
+            llm_preview=llm_preview,
+            blue_green_plan=blue_green_plan,
         )
 
     @router.get(

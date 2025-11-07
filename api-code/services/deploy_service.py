@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+import json
 import google.generativeai as genai
 
 from domain import DeployStatus, is_valid_transition
@@ -252,6 +253,16 @@ class DeployService:
             "notes": list(dict.fromkeys(warnings)),
         }
 
+    async def _prepare_preview_inputs(
+        self,
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, int], List[str], Dict[str, Any]]:
+        diff_context = await self._resolve_preview_context()
+        diff_stats = diff_context.get("diff_stats", {})
+        stage_seconds = self._estimate_stage_seconds(diff_stats)
+        warnings = list(diff_stats.get("warnings", []))
+        cost_estimate = self._estimate_cost_summary(stage_seconds, diff_stats)
+        return diff_context, diff_stats, stage_seconds, warnings, cost_estimate
+
     def _assemble_task_context(self, task: DeployTask) -> Dict[str, Any]:
         metadata = task.metadata or {}
         context: Dict[str, Any] = {
@@ -396,6 +407,14 @@ class DeployService:
             task_document = await self.repository.get_task(task_id)
             action = (task_document.metadata.get("action") if task_document else None) or "deploy"
             auto_recovery: Optional[Dict[str, Any]] = None
+            try:
+                await self._prime_preflight_metadata(task_id)
+            except Exception as snapshot_exc:  # pragma: no cover - diagnostic only
+                logger.warning(
+                    "Unable to cache preflight snapshot for task=%s (%s)",
+                    task_id,
+                    snapshot_exc,
+                )
 
             try:
                 await self._ensure_valid_transition(task_id, DeployStatus.RUNNING_CLONE)
@@ -500,6 +519,35 @@ class DeployService:
                 append_metadata={status.value: metadata},
             ),
         )
+
+    async def _prime_preflight_metadata(self, task_id: str) -> Dict[str, Any]:
+        (
+            diff_context,
+            diff_stats,
+            stage_seconds,
+            warnings,
+            cost_estimate,
+        ) = await self._prepare_preview_inputs()
+        llm_preview = await self._generate_llm_preview(diff_context)
+        warnings = list(dict.fromkeys(warnings))
+        risk_assessment = self._build_risk_assessment(diff_stats, warnings)
+        snapshot = {
+            "cost_estimate": cost_estimate,
+            "risk_assessment": risk_assessment,
+            "llm_preview": llm_preview,
+            "generated_at": utc_now().isoformat(),
+        }
+        await self.repository.update_task(
+            task_id,
+            DeployTaskUpdate(
+                append_metadata={
+                    "summary": {
+                        "preflight": snapshot,
+                    }
+                }
+            ),
+        )
+        return snapshot
 
     async def _run_clone_stage(
         self,
@@ -664,6 +712,33 @@ class DeployService:
             "dry_run": self.dry_run,
         }
 
+    async def describe_blue_green_state(self) -> Dict[str, Any]:
+        active_target = self._resolve_live_target()
+        active_slot = self._slot_from_path(active_target)
+
+        if self.dev_server_mode:
+            next_cutover_target = "dev-server"
+            standby_slot: Optional[str] = None
+        else:
+            next_target = self._select_next_target(active_target)
+            next_cutover_target = self._slot_from_path(next_target)
+            standby_slot = (
+                "blue"
+                if active_slot == "green"
+                else "green"
+                if active_slot == "blue"
+                else (next_cutover_target if next_cutover_target in {"green", "blue"} else None)
+            )
+
+        last_cutover_at = await self._resolve_last_cutover_timestamp()
+
+        return {
+            "active_slot": active_slot,
+            "standby_slot": standby_slot,
+            "last_cutover_at": last_cutover_at,
+            "next_cutover_target": next_cutover_target,
+        }
+
     @staticmethod
     def _normalize_path(path: Path) -> Path:
         return path.resolve(strict=False)
@@ -696,6 +771,42 @@ class DeployService:
 
         # Unknown target; default to cycling back to green.
         return self.nginx_green_path
+
+    def _slot_from_path(self, target: Optional[Path]) -> str:
+        if target is None:
+            return "unknown"
+        normalized = self._normalize_path(target)
+        if normalized == self._normalize_path(self.nginx_green_path):
+            return "green"
+        if normalized == self._normalize_path(self.nginx_blue_path):
+            return "blue"
+        return "unknown"
+
+    async def _resolve_last_cutover_timestamp(self) -> Optional[str]:
+        try:
+            successes = await self.repository.get_recent_successes(
+                branch=self.default_branch,
+                limit=1,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to read recent successes for blue/green state: %s", exc)
+            return None
+
+        if not successes:
+            return None
+
+        latest = successes[0]
+        metadata = latest.metadata or {}
+        cutover_meta = metadata.get(DeployStatus.RUNNING_CUTOVER.value, {})
+        if isinstance(cutover_meta, dict):
+            timestamp = cutover_meta.get("timestamp")
+            if timestamp:
+                return timestamp
+
+        summary = metadata.get("summary")
+        if isinstance(summary, dict):
+            return summary.get("completed_at")
+        return None
 
     async def _get_current_commit(self) -> str:
         result = await self._run_command(
@@ -859,15 +970,16 @@ class DeployService:
         else:
             command_plan.append("no static cutover (dev-server mode)")
 
-        diff_context = await self._resolve_preview_context()
-        diff_stats = diff_context.get("diff_stats", {})
-        stage_seconds = self._estimate_stage_seconds(diff_stats)
+        (
+            diff_context,
+            diff_stats,
+            stage_seconds,
+            warnings,
+            cost_estimate,
+        ) = await self._prepare_preview_inputs()
         timeline_preview = self._build_estimated_timeline(stage_seconds)
-        warnings: List[str] = list(diff_stats.get("warnings", []))
 
         llm_preview = await self._generate_llm_preview(diff_context)
-        cost_estimate = self._estimate_cost_summary(stage_seconds, diff_stats)
-        risk_assessment = self._build_risk_assessment(diff_stats, warnings)
 
         task_context: Optional[Dict[str, Any]] = None
         if task_id:
@@ -886,6 +998,8 @@ class DeployService:
             warnings.append(str(diff_context["reason"]))
 
         warnings = list(dict.fromkeys(warnings))
+        risk_assessment = self._build_risk_assessment(diff_stats, warnings)
+        blue_green_plan = await self.describe_blue_green_state()
 
         return {
             "current_branch": self.default_branch,
@@ -901,6 +1015,7 @@ class DeployService:
             "timeline_preview": timeline_preview,
             "warnings": warnings,
             "task_context": task_context,
+            "blue_green_plan": blue_green_plan,
         }
 
     async def estimate_runtime_minutes(self) -> int:
@@ -1017,11 +1132,15 @@ class DeployService:
         }
 
     async def _generate_llm_preview(self, diff_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        if not self.settings.gemini_api_key:
+        def _fallback(message: str) -> Dict[str, Any]:
             return {
-                "status": "skipped",
-                "reason": "Gemini API key not configured.",
+                "summary": message,
+                "highlights": [],
+                "risks": [],
             }
+
+        if not self.settings.gemini_api_key:
+            return _fallback("Gemini API key not configured.")
 
         context = diff_context or await self._resolve_preview_context()
         base_commit = context.get("base_commit")
@@ -1029,13 +1148,8 @@ class DeployService:
         diff_output = context.get("diff_output", "")
 
         if not context.get("ready"):
-            return {
-                "status": "skipped",
-                "reason": context.get("reason", "Diff context unavailable."),
-                "base_commit": base_commit,
-                "target_commit": head_commit,
-                "diff_snippet": diff_output,
-            }
+            reason = context.get("reason", "Diff context unavailable.")
+            return _fallback(reason)
 
         if len(diff_output) > self.settings.preview_diff_max_chars:
             diff_output = diff_output[: self.settings.preview_diff_max_chars] + "\n… (truncated)"
@@ -1051,42 +1165,28 @@ class DeployService:
             Git diff (name-status):
             {diff_output or '(no file changes listed)'}
 
-            Provide:
-            1. Key functional changes inferred from filenames/paths.
-            2. Potential risk areas or components to smoke-test.
-            3. Any follow-up questions or clarifications to raise with the author.
-            Keep it concise and readable in Markdown bullet format.
+            Respond ONLY with compact JSON that matches:
+            {{
+              "summary": "<one-sentence overview>",
+              "highlights": ["<key change>", "<another highlight>"],
+              "risks": ["<risk or validation reminder>"]
+            }}
+            Limit highlights and risks to at most three short entries each.
             """
         ).strip()
-
-        llm_payload: Dict[str, Any] = {
-            "status": "skipped",
-            "reason": "Gemini call not attempted.",
-            "model": self.settings.preview_llm_model,
-            "base_commit": base_commit,
-            "target_commit": head_commit,
-            "diff_snippet": diff_output,
-        }
 
         try:
             summary_text = await asyncio.to_thread(self._call_gemini, prompt)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Gemini preview generation failed: %s", exc)
-            llm_payload.update(
-                {
-                    "status": "failed",
-                    "reason": str(exc),
-                }
-            )
-            return llm_payload
+            return _fallback(f"Failed to generate preview: {exc}")
 
-        llm_payload.update(
-            {
-                "status": "completed",
-                "response": summary_text.strip(),
-            }
-        )
-        return llm_payload
+        structured = self._coerce_llm_preview(summary_text)
+        if not structured["summary"]:
+            structured["summary"] = (
+                f"Planned updates between {base_commit or 'previous'} and {head_commit or 'current'}."
+            )
+        return structured
 
     def _call_gemini(self, prompt: str) -> str:
         genai.configure(api_key=self.settings.gemini_api_key)
@@ -1107,3 +1207,59 @@ class DeployService:
             if parts:
                 return "\n".join(parts)
         return "LLM did not return any content."
+
+    def _coerce_llm_preview(self, raw_text: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "summary": "",
+            "highlights": [],
+            "risks": [],
+        }
+        if not raw_text:
+            payload["summary"] = "LLM did not return any content."
+            return payload
+
+        candidate = raw_text.strip()
+        fence_match = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL | re.IGNORECASE)
+        if fence_match:
+            candidate = fence_match.group(1).strip()
+
+        parsed: Optional[Dict[str, Any]] = None
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+        if isinstance(parsed, dict):
+            summary = str(parsed.get("summary") or "").strip()
+            highlights = [
+                str(item).strip()
+                for item in parsed.get("highlights", [])
+                if isinstance(item, (str, int, float)) and str(item).strip()
+            ]
+            risks = [
+                str(item).strip()
+                for item in parsed.get("risks", [])
+                if isinstance(item, (str, int, float)) and str(item).strip()
+            ]
+            payload["summary"] = summary
+            payload["highlights"] = highlights[:3]
+            payload["risks"] = risks[:3]
+            return payload
+
+        lines = [line.strip() for line in candidate.splitlines() if line.strip()]
+        summary_line = lines[0] if lines else "LLM preview unavailable."
+        highlight_lines: List[str] = []
+        risk_lines: List[str] = []
+        for line in lines[1:]:
+            normalized = line.lstrip("-•* ").strip()
+            if not normalized:
+                continue
+            if "risk" in normalized.lower():
+                risk_lines.append(normalized)
+            else:
+                highlight_lines.append(normalized)
+
+        payload["summary"] = summary_line
+        payload["highlights"] = highlight_lines[:3]
+        payload["risks"] = risk_lines[:3]
+        return payload

@@ -20,11 +20,13 @@ def build_health_router(deploy_service: DeployService) -> APIRouter:
     @router.get("/healthz")
     async def healthcheck() -> Dict[str, Any]:
         pm2_task = asyncio.create_task(_collect_pm2_states(PM2_TARGETS))
+        blue_green_task = asyncio.create_task(deploy_service.describe_blue_green_state())
 
         mongo_ok = await deploy_service.repository.ping()
         latest_task = await deploy_service.repository.get_latest_task()
 
         pm2_states = await pm2_task
+        blue_green = await blue_green_task
         issues = []
         if not mongo_ok:
             issues.append("MongoDB ping failed.")
@@ -41,6 +43,7 @@ def build_health_router(deploy_service: DeployService) -> APIRouter:
             "last_task_id": latest_task.task_id if latest_task else None,
             "last_task_status": latest_task.status if latest_task else None,
             "issues": issues,
+            "blue_green": blue_green,
         }
         return response
 

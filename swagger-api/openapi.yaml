@@ -279,6 +279,20 @@ components:
           type: object
           nullable: true
           additionalProperties: true
+        cost_estimate:
+          type: object
+          additionalProperties: true
+          nullable: true
+        risk_assessment:
+          type: object
+          additionalProperties: true
+          nullable: true
+        llm_preview:
+          $ref: '#/components/schemas/LLMPreview'
+          nullable: true
+        blue_green_plan:
+          $ref: '#/components/schemas/BlueGreenPlan'
+          nullable: true
     DeployPreviewResponse:
       type: object
       required:
@@ -289,6 +303,7 @@ components:
         - cost_estimate
         - timeline_preview
         - warnings
+        - blue_green_plan
       properties:
         current_branch:
           type: string
@@ -319,9 +334,8 @@ components:
           type: object
           additionalProperties: true
         llm_preview:
-          type: object
+          $ref: '#/components/schemas/LLMPreview'
           nullable: true
-          additionalProperties: true
         timeline_preview:
           type: array
           items:
@@ -333,6 +347,8 @@ components:
         task_context:
           $ref: '#/components/schemas/DeployTaskSummary'
           nullable: true
+        blue_green_plan:
+          $ref: '#/components/schemas/BlueGreenPlan'
     RollbackRequest:
       type: object
       properties:
@@ -459,3 +475,39 @@ components:
           type: array
           items:
             type: string
+        blue_green:
+          $ref: '#/components/schemas/BlueGreenPlan'
+    LLMPreview:
+      type: object
+      required: [summary, highlights, risks]
+      properties:
+        summary:
+          type: string
+        highlights:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            type: string
+    BlueGreenPlan:
+      type: object
+      required: [active_slot, next_cutover_target]
+      properties:
+        active_slot:
+          type: string
+          description: Currently serving color (green/blue/dev-server/unknown).
+        standby_slot:
+          type: string
+          nullable: true
+          description: Idle slot that will be served next if a cutover occurs.
+        last_cutover_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent completed cutover, if known.
+        next_cutover_target:
+          type: string
+          nullable: true
+          description: Slot targeted for the next cutover step.

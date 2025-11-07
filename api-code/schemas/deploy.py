@@ -53,6 +53,19 @@ class DeployStatusResponse(BaseModel):
     failure_context: Optional[Dict[str, Any]] = Field(
         default=None, description="Auto-recovery metadata captured when failures occur."
     )
+    cost_estimate: Optional[Dict[str, Any]] = Field(
+        default=None, description="Snapshot of cost/runtime estimated when the task started."
+    )
+    risk_assessment: Optional[Dict[str, Any]] = Field(
+        default=None, description="Risk summary captured during the preflight check."
+    )
+    llm_preview: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured LLM summary ({summary, highlights, risks}) describing planned changes.",
+    )
+    blue_green_plan: Optional[Dict[str, Any]] = Field(
+        default=None, description="Active/standby slot snapshot for blue/green deployments."
+    )
 
 
 class DeployPreviewResponse(BaseModel):
@@ -70,7 +83,7 @@ class DeployPreviewResponse(BaseModel):
     cost_estimate: Dict[str, Any] = Field(..., description="Rough execution cost/time details.")
     llm_preview: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Gemini-generated summary of the upcoming deploy diff. Contains status, diff snippet, and response text when available.",
+        description="Structured summary ({summary, highlights, risks}) highlighting the next deploy diff.",
     )
     timeline_preview: list[Dict[str, Any]] = Field(
         ..., description="Ordered timeline with expected seconds per stage."
@@ -81,6 +94,10 @@ class DeployPreviewResponse(BaseModel):
     )
     task_context: Optional[Dict[str, Any]] = Field(
         default=None, description="Snapshot of a specific task when task_id is provided."
+    )
+    blue_green_plan: Dict[str, Any] = Field(
+        ...,
+        description="Active/standby slot snapshot (active_slot, standby_slot, last_cutover_at, next_cutover_target).",
     )
 
 

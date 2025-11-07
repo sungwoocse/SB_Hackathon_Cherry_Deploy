@@ -125,7 +125,14 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn(stage.value, stored.metadata)
             self.assertIn("dry_run", stored.metadata[stage.value])
         self.assertIn("summary", stored.metadata)
-        self.assertEqual(stored.metadata["summary"]["result"], "success")
+        summary = stored.metadata["summary"]
+        self.assertEqual(summary["result"], "success")
+        self.assertIn("preflight", summary)
+        preflight = summary["preflight"]
+        self.assertIn("cost_estimate", preflight)
+        self.assertIn("risk_assessment", preflight)
+        self.assertIn("llm_preview", preflight)
+        self.assertIn("summary", preflight["llm_preview"])
 
     async def test_get_task_returns_document(self) -> None:
         request = DeployRequest(branch="main")
@@ -214,6 +221,12 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(RuntimeError):
             await self.service.prepare_rollback("deploy")
+
+    async def test_describe_blue_green_state_defaults_in_dev_mode(self) -> None:
+        state = await self.service.describe_blue_green_state()
+        self.assertEqual(state["active_slot"], "unknown")
+        self.assertEqual(state["next_cutover_target"], "dev-server")
+        self.assertIsNone(state["standby_slot"])
 
     async def test_run_pipeline_serializes_concurrent_invocations(self) -> None:
         request = DeployRequest(branch="deploy")
