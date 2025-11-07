@@ -58,6 +58,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeployResponse'
+        '400':
+          description: Branch not allowed or payload invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Server error prevented task creation.
           content:
@@ -104,6 +110,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeployPreviewResponse'
+        '404':
+          description: task_id provided but task metadata missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/rollback:
     post:
       summary: Roll back to the previous successful deployment commit
@@ -388,7 +400,8 @@ components:
           type: boolean
         status:
           type: string
-          description: "completed, upcoming, or pending"
+          description: Stage progression indicator.
+          enum: [completed, upcoming, pending]
         metadata:
           type: object
           nullable: true
