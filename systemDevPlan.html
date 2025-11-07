@@ -28,15 +28,15 @@
             <ul>
                 <li><strong>목적:</strong> 배포/롤백을 시연하기 위한 타겟.</li>
                 <li><strong>소스코드:</strong> <code>Repo 1: SB_Hackathon_Cherry_Chatbot</code></li>
-                <li><strong>프레임워크:</strong> Next.js 앱 (루트: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run dev</code>, <code>npm run build</code>가 동작합니다.</li>
-                <li><strong>실행:</strong> [시스템 2]가 <code>npm install</code>을 수행한 뒤 PM2로 <code>npm run dev</code>를 백그라운드(`frontend-dev`)에 기동합니다.</li>
+                <li><strong>프레임워크:</strong> Next.js 앱 (루트: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run build</code>, <code>npm run export</code>가 동작합니다.</li>
+                <li><strong>실행:</strong> [시스템 2]가 <code>npm install → npm run build → npm run export</code>를 실행해 정적 산출물(<code>out/</code>)을 만든 뒤 Blue/Green 슬롯에 복제합니다. <code>FRONTEND_BUILD_OUTPUT_SUBDIR</code>를 비우면 PM2 `frontend-dev` 모드(Next.js dev 서버)를 선택할 수 있습니다.</li>
             </ul>
         </li>
         <li><strong>[시스템 2] '핵심 백엔드' (DevOps + 챗봇 API)</strong>
             <ul>
                 <li><strong>목적:</strong> '배포 기계'이자 '챗봇 API' 서버. (모든 백엔드 통합)</li>
                 <li><strong>소스코드:</strong> <code>Repo 2: SB_Hackathon_Cherry_Deploy</code></li>
-                <li><strong>실행 (PM2):</strong> <code>pm2 start /home/ec2-user/projects/SB_Hackathon_Cherry_Deploy/app_main.py --name main-api --port 9001</code></li>
+                <li><strong>실행 (PM2):</strong> <code>pm2 start "uvicorn app_main:app --host 0.0.0.0 --port 9001" --name main-api</code></li>
             </ul>
         </li>
     </ul>
@@ -52,7 +52,7 @@
                 <li><strong>Request Body (수정됨):</strong> 
                     <pre style="background-color: #f4f4f4; padding: 10px; border-radius: 5px; font-size: 14px;">
 {
-    "branch": "upload"
+    "branch": "main"
 }
                     </pre>
                 </li>
@@ -70,13 +70,23 @@
         </li>
         <li><strong><code>GET /api/v1/preview</code> (DevOps API)</strong>
             <ul>
-                <li><strong>설명:</strong> 배포 전 예상 비용/리스크를 반환합니다. (MVP는 하드코딩)</li>
+                <li><strong>설명:</strong> 최근 성공 배포 대비 Git diff를 수집해 예상 명령 목록, 단계별 ETA, 비용 추정, Blue/Green 현황, 위험도, Gemini 2.5 Flash 요약을 돌려줍니다.</li>
             </ul>
         </li>
         <li><strong><code>POST /api/v1/chat</code> (챗봇 API)</strong>
             <ul>
                 <li><strong>설명:</strong> 챗봇 UI가 호출할 간단한 LLM API입니다.</li>
                 <li><strong>Request Body:</strong> <code>{ "message": "string" }</code></li>
+            </ul>
+        </li>
+        <li><strong><code>GET /api/v1/tasks/recent</code>, <code>GET /api/v1/tasks/{task_id}/logs</code></strong>
+            <ul>
+                <li><strong>설명:</strong> 최근 배포/롤백 작업 요약과 각 단계(stdout/stderr 포함) 로그 조회를 제공합니다.</li>
+            </ul>
+        </li>
+        <li><strong><code>GET /healthz</code></strong>
+            <ul>
+                <li><strong>설명:</strong> MongoDB 연결, PM2(`main-api`, `frontend-dev`) 상태, Blue/Green 슬롯을 동시에 점검합니다.</li>
             </ul>
         </li>
     </ul>
@@ -86,10 +96,10 @@
     <h2 style="font-size: 22px; margin-top: 30px;">4. 필수 EC2 환경 및 설치 (EC2 체크리스트)</h2>
     <ul style="margin-left: 20px; font-size: 16px;">
         <li><strong>Python 3.12:</strong> EC2 전역에 설치된 Python 3.12를 사용합니다.</li>
-        <li><strong>Node.js / npm:</strong> (<code>npm install -g pm2</code> 및 <code>SB_Hackathon_Cherry_Chatbot</code> <code>build</code>에 필요)</li>
+        <li><strong>Node.js / npm:</strong> (<code>npm install -g pm2</code> 및 <code>SB_Hackathon_Cherry_Chatbot</code> 빌드에 필요)</li>
         <li><strong>Nginx:</strong> (<code>sudo apt install nginx</code>. 리버스 프록시 및 Blue/Green 트래픽 전환용)</li>
         <li><strong>PM2:</strong> (<code>npm install -g pm2</code>. <code>main-api</code> 관리용)</li>
-        <li><strong>MongoDB:</strong> (<code>sudo apt install mongodb</code>. 배포 이력 및 리포트 저장용)</li>
+        <li><strong>MongoDB:</strong> (<code>./mongodb</code> 디렉터리에 압축 해제된 바이너리를 사용하며, <code>./mongodb/bin/mongod --dbpath mongodb-data --bind_ip 127.0.0.1 --port 27017 --fork --logpath mongodb-data/mongod.log</code> 명령으로 실행)</li>
         <li><strong>Git:</strong> (<code>sudo apt install git</code>. 소스코드 <code>pull</code>용)</li>
     </ul>
 
@@ -132,18 +142,18 @@
         </li>
         <li><strong>DB 상태 "running_build":</strong>
             <ul>
-                <li><code>subprocess</code>로 <strong><code>npm install</code></strong>을 실행한 뒤, 기본값으로 <code>pm2 start npm --name frontend-dev -- run dev</code>를 호출해 개발 서버를 띄웁니다. 필요하면 <code>FRONTEND_BUILD_COMMAND</code> 환경변수로 명령을 교체할 수 있습니다.</li>
+                <li><code>subprocess</code>로 <strong><code>npm install</code> → <code>npm run build</code> → <code>npm run export</code></strong>를 실행합니다. 각 명령은 <code>FRONTEND_INSTALL_COMMAND</code>, <code>FRONTEND_BUILD_COMMAND</code>, <code>FRONTEND_EXPORT_COMMAND</code>로 덮어쓸 수 있습니다.</li>
                 <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/frontend/my-dashboard/"</code>)</strong></li>
             </ul>
         </li>
         <li><strong>DB 상태 "running_cutover":</strong>
             <ul>
-                <li>정적 산출물 경로가 설정되면, 현재 라이브 심볼릭 링크를 확인해 반대 슬롯(Blue ↔ Green)에 빌드 결과를 복사하고, <code>current</code> 링크를 새 슬롯으로 스왑합니다. Dry-run 모드에서는 실제 복사 없이 대상만 계산합니다.</li>
+                <li><code>FRONTEND_BUILD_OUTPUT_SUBDIR</code>(기본값 <code>out/</code>)이 비어있지 않으면 현재 Live 슬롯을 확인해 반대 슬롯(Blue ↔ Green)에 정적 산출물을 복사하고, <code>current</code> 심볼릭 링크를 새 슬롯으로 스왑합니다. Dry-run 모드에서는 계산만 수행합니다.</li>
             </ul>
         </li>
-        <li><strong>DB 상태 "running_observability":</strong> Preview API가 git diff를 수집하고 Gemini 2.5 Flash로 요약을 생성합니다.</li>
+        <li><strong>DB 상태 "running_observability":</strong> 현재 버전은 "Observability checks are not implemented yet." 메시지를 기록해두고 추후 확장을 위한 자리를 확보합니다.</li>
         <li><strong>DB 상태 "completed":</strong> 이전 'Blue' 환경을 정리하고 작업을 종료합니다.</li>
-        <li><strong>실패 처리:</strong> <code>npm install</code> 또는 PM2 dev 기동 단계에서 실패하면 서비스가 즉시 직전 성공 배포 커밋으로 자동 롤백을 시도하고, 결과를 원본 Task 메타데이터의 <code>failure_context.auto_recovery</code>에 기록합니다.</li>
+        <li><strong>실패 처리:</strong> <code>npm install</code> 단계에서 오류가 발생하면 서비스가 즉시 직전 성공 배포 커밋으로 자동 롤백을 시도하고, 결과를 원본 Task 메타데이터의 <code>failure_context.auto_recovery</code>에 기록합니다.</li>
     </ol>
     <p style="font-size: 16px; color: #555;">※ 현재 기본값은 <code>DEPLOY_DRY_RUN=false</code>라서 위 명령들이 실제 실행됩니다. 테스트 목적으로 시뮬레이션만 원하면 PM2/환경변수에서 <code>DEPLOY_DRY_RUN=true</code>로 설정한 뒤 재시작하세요.</p>
     
@@ -181,7 +191,7 @@
                 <li><code>git reset --hard to_commit</code></li>
                 <li><code>git clean -fdx</code></li>
                 <li><code>git push origin +to_commit:[branch]</code> (실제 모드에서만)</li>
-                <li><code>npm install</code> 후 PM2 `npm run dev` 명령을 재적용</li>
+                <li><code>npm install → npm run build → npm run export</code> 실행 후 Blue/Green 심볼릭 링크를 동일하게 복구</li>
             </ul>
         </li>
         <li><strong>결과:</strong> <code>/api/v1/status/{task_id}</code>로 롤백 진행 상황과 <code>rolled_back_from/rolled_back_to</code> 메타데이터를 확인.</li>

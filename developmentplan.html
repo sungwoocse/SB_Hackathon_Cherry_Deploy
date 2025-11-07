@@ -44,7 +44,7 @@
     <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(B) 실제 구현 (수정 완료)</h3>
     <ul style="margin-left: 20px; font-size: 16px;">
         <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code>를 호출</li>
-        <li><strong>자동 흐름:</strong> FastAPI 백엔드가 <code>git fetch → checkout/reset → clean → npm install → pm2 start</code> 순으로 실행하고 필요 시 Nginx Blue/Green 심볼릭 링크를 스왑</li>
+        <li><strong>자동 흐름:</strong> FastAPI 백엔드가 <code>git fetch → checkout/reset → clean → npm install → npm run build → npm run export</code> 순으로 Next.js 정적 산출물(<code>out/</code>)을 만든 뒤, Nginx Blue/Green 심볼릭 링크를 스왑</li>
         <li><strong>안전장치:</strong> 실패 시 직전 성공 커밋 대상으로 자동 롤백 시도, SSH 키와 환경 변수는 EC2에만 저장</li>
         <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 Gemini 2.5 Flash로 요약해 변경 사항과 리스크를 공유</li>
         <li><strong>동시성:</strong> 서버 레벨 락으로 배포를 직렬화해 충돌을 방지</li>
@@ -59,7 +59,7 @@
 
     <h2 style="font-size: 24px; margin-top: 30px;">3. 실행 계획: 기술 스택 및 흐름</h2>
     <p style="font-size: 18px; font-weight: 500; background-color: #f4f4f4; padding: 15px; border-radius: 8px;">
-        <strong>"Cherry Deploy API로 오케스트레이션, PM2로 무중단/프로세스 관리"</strong>
+        <strong>"Cherry Deploy API로 Git/빌드를 오케스트레이션하고, PM2가 FastAPI를 지키며 Nginx Blue/Green을 스왑"</strong>
     </p>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🛠️ 핵심 기술 스택</h3>
@@ -67,20 +67,21 @@
         <li><strong>지휘 (Orchestration):</strong> Cherry Deploy FastAPI 백엔드</li>
         <li><strong>인프라 (Infra):</strong> AWS EC2 (SSH 기반 관리)</li>
         <li><strong>트래픽 제어 (Gateway):</strong> Nginx (리버스 프록시, Blue/Green 전환용)</li>
-        <li><strong>프로세스 관리 (Runner):</strong> PM2 (무중단 재시작)</li>
+        <li><strong>프로세스 관리 (Runner):</strong> PM2 (`main-api` FastAPI 프로세스 관리 + 필요 시 `frontend-dev` 백업)</li>
         <li><strong>변경 요약 (Preview):</strong> Gemini 2.5 Flash를 이용한 git diff 요약</li>
-        <li><strong>프론트엔드 타겟:</strong> Next.js 앱 (경로: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run dev</code>, <code>npm run build</code> 실행이 가능.</li>
+        <li><strong>정적 컷오버:</strong> Next.js 앱(<code>frontend/my-dashboard</code>)을 <code>npm run build</code> & <code>npm run export</code>로 <code>out/</code> 디렉터리에 내보내고 Blue/Green 슬롯에 복제.</li>
+        <li><strong>프론트엔드 타겟:</strong> Next.js 앱 (경로: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run build</code>, <code>npm run export</code> 실행이 가능.</li>
     </ul>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🌊 배포 파이프라인 흐름</h3>
     <ol>
         <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code> 엔드포인트를 호출한다.</li>
         <li><strong>저장소 동기화:</strong> 서버 측에서 <code>git fetch → checkout/reset → clean</code> 순으로 Repo1 워킹 디렉터리를 최신화한다.</li>
-        <li><strong>빌드/재기동:</strong> <code>npm install</code> 후 PM2로 <code>npm run dev</code>를 백그라운드 실행한다(프로세스명 <code>frontend-dev</code>).</li>
-        <li><strong>컷오버:</strong> 정적 산출물이 존재하면 현재 라이브 슬롯을 확인해 상대편 슬롯으로 동기화하고, Nginx 심볼릭 링크를 새 슬롯으로 스왑한다.</li>
+        <li><strong>빌드/내보내기:</strong> <code>npm install</code> → <code>npm run build</code> → <code>npm run export</code> 순으로 정적 산출물을 만든다. 이 명령들은 <code>FRONTEND_*</code> 환경변수로 교체 가능하다.</li>
+        <li><strong>컷오버:</strong> <code>out/</code> 결과물을 현재 라이브 슬롯의 반대편(Blue ↔ Green)에 복사하고, <code>/var/www/cherry-deploy/current</code> 심볼릭 링크를 새 슬롯으로 스왑한다. <code>FRONTEND_BUILD_OUTPUT_SUBDIR</code>를 비우면 dev-server 모드로 전환된다.</li>
         <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 요약해 팀원에게 공유한다.</li>
         <li><strong>상태 모니터링:</strong> 클라이언트는 <code>/api/v1/status/{task_id}</code>로 진행 상황과 메타데이터를 폴링한다.</li>
-        <li><strong>자동 롤백:</strong> <code>npm install</code> 또는 PM2 단계에서 오류가 발생하면 직전 성공 커밋으로 자동 복구를 시도한다.</li>
+        <li><strong>자동 롤백:</strong> <code>npm install</code> 단계가 실패하면 즉시 직전 성공 커밋으로 자동 복구를 시도하고, 결과를 <code>failure_context.auto_recovery</code>에 기록한다.</li>
     </ol>
 
     <h3 style="font-size: 22px; margin-top: 30px;">🎯 핵심 데모 포인트 (심사위원 대상)</h3>
@@ -101,7 +102,7 @@
     </p>
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 롤백은 어떻게 동작하나요?</h4>
     <p style="margin: 0 0 15px 0;">
-        A: <code>POST /api/v1/rollback</code>을 호출하면 최근 성공 배포 두 건을 확인해 최신 commit에서 바로 이전 commit으로 되돌립니다. 내부적으로 <code>git fetch</code>, <code>git checkout -B ... to_commit</code>, <code>git reset --hard</code>, <code>git clean -fdx</code>, <code>npm install</code> 후 동일한 PM2 `npm run dev` 명령을 재적용합니다. 실제 모드에서는 <code>git push origin +to_commit:branch</code>로 원격도 강제로 되돌립니다. (TIP: Repo1 <code>deploy</code> 브랜치에는 <code>frontend/my-dashboard</code>만 올려두세요.)</p>
+        A: <code>POST /api/v1/rollback</code>을 호출하면 최근 성공 배포 두 건을 확인해 최신 commit에서 바로 이전 commit으로 되돌립니다. 내부적으로 <code>git fetch</code>, <code>git checkout -B ... to_commit</code>, <code>git reset --hard</code>, <code>git clean -fdx</code>, <code>npm install</code>, <code>npm run build</code>, <code>npm run export</code> 후 Blue/Green 심볼릭 링크까지 동일하게 재적용합니다. 실제 모드에서는 <code>git push origin +to_commit:branch</code>로 원격도 강제로 되돌립니다. (TIP: Repo1 <code>deploy</code> 브랜치에는 <code>frontend/my-dashboard</code>만 올려두세요.)</p>
 
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 백엔드 <code>/api/v1/deploy</code> 호출 시 어떤 입력이 필요한가요?</h4>
     <p style="margin: 0 0 15px 0;">
@@ -110,7 +111,7 @@
     </p>
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 테스트 모드(드라이런)와 실제 배포 모드는 어떻게 전환하나요?</h4>
     <p style="margin: 0 0 15px 0;">
-        A: 기본값은 실제 명령 실행(<code>DEPLOY_DRY_RUN=false</code>)입니다. 시뮬레이션만 원하면 PM2를 재시작하기 전에 환경변수 <code>DEPLOY_DRY_RUN=true</code>를 설정하세요. MongoDB는 프로젝트 루트의 <code>./mongodb</code>, 데이터는 <code>./mongodb-data</code>에 위치합니다. 실제 배포 모드에서는 <code>git fetch → git checkout -B ... → git reset --hard → git clean -fdx → npm install</code> 순으로 Repo1 워킹 디렉터리를 교체한 뒤 PM2 `npm run dev` 명령을 실행합니다.</p>
+        A: 기본값은 실제 명령 실행(<code>DEPLOY_DRY_RUN=false</code>)입니다. 시뮬레이션만 원하면 PM2를 재시작하기 전에 환경변수 <code>DEPLOY_DRY_RUN=true</code>를 설정하세요. MongoDB는 프로젝트 루트의 <code>./mongodb</code>, 데이터는 <code>./mongodb-data</code>에 위치합니다. 실제 배포 모드에서는 <code>git fetch → git checkout -B ... → git reset --hard → git clean -fdx → npm install → npm run build → npm run export</code> 순으로 Repo1 워킹 디렉터리를 교체한 뒤 Blue/Green 심볼릭 링크를 스왑합니다.</p>
     <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: Preview API는 어떤 정보를 주나요?</h4>
     <p style="margin: 0 0 15px 0;">
         A: 최신 성공 배포 대비 Git diff를 수집해 Gemini 2.5 Flash 모델로 요약한 변경 사항, 위험 요소, 테스트 권장 사항을 제공합니다. `GEMINI_API_KEY`가 설정돼 있어야 하며 모델은 `PREVIEW_LLM_MODEL`로 변경할 수 있습니다.
