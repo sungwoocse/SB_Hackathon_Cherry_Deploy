@@ -69,12 +69,12 @@ class Settings(BaseModel):
         description="Command used to install frontend dependencies.",
     )
     frontend_build_command: str = Field(
-        default='bash -lc "pm2 delete frontend-dev 2>/dev/null || true; pm2 start npm --name frontend-dev -- run dev -- --hostname 0.0.0.0 --port 3000"',
+        default='bash -lc "npm run build"',
         alias="FRONTEND_BUILD_COMMAND",
         description="Command used to build the frontend application.",
     )
     frontend_export_command: Optional[str] = Field(
-        default=None,
+        default="npm run export",
         alias="FRONTEND_EXPORT_COMMAND",
         description=(
             "Optional command to generate static export artifacts after build. "
@@ -82,7 +82,7 @@ class Settings(BaseModel):
         ),
     )
     frontend_build_output_subdir: str = Field(
-        default="",
+        default="out",
         alias="FRONTEND_BUILD_OUTPUT_SUBDIR",
         description=(
             "Relative path to the directory containing deployable frontend assets "
@@ -103,6 +103,11 @@ class Settings(BaseModel):
         default=4000,
         alias="PREVIEW_DIFF_MAX_CHARS",
         description="Maximum number of diff characters supplied to the preview LLM.",
+    )
+    display_timezone: str = Field(
+        default="Asia/Seoul",
+        alias="DISPLAY_TIMEZONE",
+        description="IANA timezone name used when presenting timestamps to API consumers.",
     )
 
     model_config = {"populate_by_name": True}

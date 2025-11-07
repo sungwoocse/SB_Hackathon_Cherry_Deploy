@@ -66,6 +66,10 @@ class DeployStatusResponse(BaseModel):
     blue_green_plan: Optional[Dict[str, Any]] = Field(
         default=None, description="Active/standby slot snapshot for blue/green deployments."
     )
+    timezone: str = Field(
+        default="Asia/Seoul",
+        description="IANA timezone identifier used for datetime fields in this response.",
+    )
 
 
 class DeployPreviewResponse(BaseModel):
@@ -120,6 +124,9 @@ class DeployTaskSummary(BaseModel):
     )
     actor: Optional[str] = Field(
         default=None, description="Resolved operator (from metadata.actor/requested_by)."
+    )
+    timezone: Optional[str] = Field(
+        default=None, description="Timezone identifier for the provided datetime fields."
     )
     summary: Optional[Dict[str, Any]] = Field(
         default=None, description="Summary info stored once the pipeline completes."

@@ -7,12 +7,15 @@ import re
 import shlex
 import shutil
 import textwrap
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import getpass
 import json
+from zoneinfo import ZoneInfo
+
 import google.generativeai as genai
 
 from domain import DeployStatus, is_valid_transition
@@ -42,6 +45,13 @@ STAGE_DEFAULT_SECONDS: Dict[str, int] = {
     DeployStatus.RUNNING_BUILD.value: 90,
     DeployStatus.RUNNING_CUTOVER.value: 25,
     DeployStatus.RUNNING_OBSERVABILITY.value: 20,
+}
+
+STAGE_PLAN_DESCRIPTIONS: Dict[str, str] = {
+    DeployStatus.RUNNING_CLONE.value: "Fetch latest refs, reset branch, and ensure a clean working tree.",
+    DeployStatus.RUNNING_BUILD.value: "Install npm packages and produce production-ready Next.js artifacts.",
+    DeployStatus.RUNNING_CUTOVER.value: "Sync exported assets to the standby color and flip the Nginx symlink.",
+    DeployStatus.RUNNING_OBSERVABILITY.value: "Run smoke checks and verify PM2/nginx health before closing the task.",
 }
 
 ESTIMATED_DEPLOY_HOURLY_COST = 6.0  # rough EC2/engineer blended cost per hour (USD)
@@ -138,6 +148,12 @@ class DeployService:
         )
         self.dev_server_mode = self.frontend_build_output_path is None
         self._pipeline_lock = AsyncReentrantLock()
+        try:
+            self.display_timezone = ZoneInfo(settings.display_timezone)
+            self.display_timezone_name = settings.display_timezone
+        except Exception:  # pragma: no cover - fallback to UTC if timezone missing
+            self.display_timezone = ZoneInfo("UTC")
+            self.display_timezone_name = "UTC"
 
     def _resolve_frontend_path(self, subdir: str) -> Path:
         subdir = (subdir or "").strip()
@@ -183,25 +199,32 @@ class DeployService:
         stage_snapshots: Dict[str, Any],
     ) -> list[Dict[str, Any]]:
         timeline: list[Dict[str, Any]] = []
-        marked_active = False
+        active_found = False
         for key in STAGE_SEQUENCE:
+            snapshot = stage_snapshots.get(key) or {}
+            metadata = self._build_stage_metadata_template(key, stage_seconds)
+            if isinstance(snapshot, dict):
+                merged = dict(snapshot)
+                metadata.update({k: v for k, v in merged.items() if v is not None})
+            status = self._derive_stage_status(key, stage_snapshots, active_found)
+            if status == "upcoming" and not active_found:
+                active_found = True
             timeline.append(
                 {
                     "stage": key,
                     "label": STAGE_LABELS.get(key, key),
                     "expected_seconds": stage_seconds.get(key),
                     "completed": key in stage_snapshots,
-                    "status": self._derive_stage_status(key, stage_snapshots, marked_active),
-                    "metadata": stage_snapshots.get(key),
+                    "status": status,
+                    "metadata": metadata,
                 }
             )
-            if timeline[-1]["status"] == "upcoming":
-                marked_active = True
         return timeline
 
     def _build_estimated_timeline(self, stage_seconds: Dict[str, int]) -> list[Dict[str, Any]]:
         timeline: list[Dict[str, Any]] = []
         for index, key in enumerate(STAGE_SEQUENCE):
+            metadata = self._build_stage_metadata_template(key, stage_seconds)
             timeline.append(
                 {
                     "stage": key,
@@ -209,6 +232,7 @@ class DeployService:
                     "expected_seconds": stage_seconds.get(key),
                     "completed": False,
                     "status": "upcoming" if index == 0 else "pending",
+                    "metadata": metadata,
                 }
             )
         return timeline
@@ -217,13 +241,34 @@ class DeployService:
         self,
         stage: str,
         stage_snapshots: Dict[str, Any],
-        marked_active: bool,
+        active_found: bool,
     ) -> str:
         if stage in stage_snapshots:
             return "completed"
-        if not marked_active:
+        if not active_found:
             return "upcoming"
         return "pending"
+
+    def _build_stage_metadata_template(
+        self, stage: str, stage_seconds: Dict[str, int]
+    ) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {
+            "plan": STAGE_PLAN_DESCRIPTIONS.get(stage, stage),
+            "eta_seconds": stage_seconds.get(stage),
+        }
+        if stage == DeployStatus.RUNNING_CLONE.value:
+            metadata["checks"] = ["git fetch origin", "hard reset to remote", "clean working tree"]
+        elif stage == DeployStatus.RUNNING_BUILD.value:
+            metadata["checks"] = ["npm install", "npm run build", "npm run export"]
+        elif stage == DeployStatus.RUNNING_CUTOVER.value:
+            metadata["checks"] = [
+                "sync export to standby color",
+                "flip /var/www/.../current symlink",
+                "reload nginx (systemd)",
+            ]
+        elif stage == DeployStatus.RUNNING_OBSERVABILITY.value:
+            metadata["checks"] = ["pm2 status main-api/frontend-dev", "curl /healthz"]
+        return metadata
 
     def _estimate_stage_seconds(self, diff_stats: Dict[str, Any]) -> Dict[str, int]:
         file_count = diff_stats.get("file_count", 0)
@@ -273,13 +318,32 @@ class DeployService:
             "notes": list(dict.fromkeys(warnings)),
         }
 
+    def _build_preview_warnings(
+        self, diff_stats: Dict[str, Any], diff_context: Dict[str, Any]
+    ) -> List[str]:
+        warnings = list(diff_stats.get("warnings", []))
+        if diff_stats.get("sensitive_changed"):
+            warnings.append("Sensitive files (certs/keys/secrets) changed; audit secrets rotation.")
+        if diff_stats.get("test_files_changed"):
+            warnings.append("Test files changed; ensure npm test passes before cutover.")
+        if diff_stats.get("file_count", 0) == 0:
+            warnings.append("No file changes detected; confirm deploy is necessary.")
+        if not diff_context.get("ready") and diff_context.get("reason"):
+            warnings.append(str(diff_context["reason"]))
+        warnings.append("Automated tests are not run by this pipeline; execute npm run lint && npm test manually.")
+        warnings.append(
+            "Observability relies on manual health checks; monitor /healthz and PM2 logs after cutover."
+        )
+        warnings = [msg for msg in warnings if msg]
+        return list(dict.fromkeys(warnings))
+
     async def _prepare_preview_inputs(
         self,
     ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, int], List[str], Dict[str, Any]]:
         diff_context = await self._resolve_preview_context()
         diff_stats = diff_context.get("diff_stats", {})
         stage_seconds = self._estimate_stage_seconds(diff_stats)
-        warnings = list(diff_stats.get("warnings", []))
+        warnings = self._build_preview_warnings(diff_stats, diff_context)
         cost_estimate = self._estimate_cost_summary(stage_seconds, diff_stats)
         return diff_context, diff_stats, stage_seconds, warnings, cost_estimate
 
@@ -290,8 +354,9 @@ class DeployService:
             "status": task.status,
             "branch": metadata.get("branch", self.default_branch),
             "action": metadata.get("action", "deploy"),
-            "started_at": task.started_at,
-            "completed_at": task.completed_at,
+            "started_at": self._to_display_time(task.started_at),
+            "completed_at": self._to_display_time(task.completed_at),
+            "timezone": self.display_timezone_name,
         }
         summary = metadata.get("summary")
         if isinstance(summary, dict):
@@ -544,6 +609,8 @@ class DeployService:
         status: DeployStatus,
         metadata: Dict[str, Any],
     ) -> None:
+        metadata = dict(metadata)
+        metadata.setdefault("timestamp", utc_now().isoformat())
         await self.repository.update_task(
             task_id,
             DeployTaskUpdate(
@@ -951,6 +1018,8 @@ class DeployService:
             "lockfile_changed": False,
             "config_changed": False,
             "env_changed": False,
+            "test_files_changed": False,
+            "sensitive_changed": False,
             "paths": [],
             "warnings": [],
         }
@@ -984,6 +1053,10 @@ class DeployService:
                 "infra" in lowered or "deploy" in lowered or "config" in lowered
             ):
                 stats["config_changed"] = True
+            if any(keyword in lowered for keyword in {"secret", "cert", ".pem", ".key", ".crt"}):
+                stats["sensitive_changed"] = True
+            if any(part in lowered for part in {"tests/", "/test/", ".spec", ".test"}):
+                stats["test_files_changed"] = True
 
         if stats["lockfile_changed"]:
             warnings.append("Detected lockfile changes; npm install may take longer.")
@@ -991,6 +1064,10 @@ class DeployService:
             warnings.append("Environment-related file modified; verify secrets.")
         if stats["config_changed"]:
             warnings.append("Configuration files updated; double-check blue/green sync.")
+        if stats["sensitive_changed"]:
+            warnings.append("Sensitive configuration detected in diff; rotate credentials if needed.")
+        if stats["test_files_changed"]:
+            warnings.append("Test files updated; ensure the relevant suites have been executed.")
         if stats["file_count"] >= 20:
             warnings.append("Large diff detected; smoke-test both frontend and API.")
 
@@ -1051,9 +1128,6 @@ class DeployService:
                 warnings.append("Task has failure_context metadata attached.")
             if task.error_log:
                 warnings.append("Task produced an error_log entry.")
-
-        if not diff_context.get("ready") and diff_context.get("reason"):
-            warnings.append(str(diff_context["reason"]))
 
         warnings = list(dict.fromkeys(warnings))
         if not warnings:
@@ -1323,6 +1397,16 @@ class DeployService:
         payload["highlights"] = highlight_lines[:3]
         payload["risks"] = risk_lines[:3]
         return payload
+
+    def _to_display_time(self, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(self.display_timezone)
+
+    def as_display_time(self, value: Optional[datetime]) -> Optional[datetime]:
+        return self._to_display_time(value)
 
     def _resolve_actor_identity(self) -> Dict[str, Optional[str]]:
         env_name = (

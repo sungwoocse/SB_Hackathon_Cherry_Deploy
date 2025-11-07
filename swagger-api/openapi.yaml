@@ -305,6 +305,9 @@ components:
         blue_green_plan:
           $ref: '#/components/schemas/BlueGreenPlan'
           nullable: true
+        timezone:
+          type: string
+          description: IANA timezone identifier for datetime fields (e.g., Asia/Seoul).
     DeployPreviewResponse:
       type: object
       required:
@@ -337,8 +340,9 @@ components:
             - "git reset --hard origin/deploy"
             - "git clean -fdx"
             - "npm install"
-            - "bash -lc pm2 delete frontend-dev 2>/dev/null || true; pm2 start npm --name frontend-dev -- run dev -- --hostname 0.0.0.0 --port 3000"
-            - "no static cutover (dev-server mode)"
+            - "bash -lc \"npm run build\""
+            - "npm run export"
+            - "sync static assets to nginx green path"
         risk_assessment:
           type: object
           additionalProperties: true
@@ -435,6 +439,10 @@ components:
           type: string
           nullable: true
           description: Operator or requester associated with the task.
+        timezone:
+          type: string
+          nullable: true
+          description: IANA timezone identifier for datetime fields.
         summary:
           type: object
           nullable: true

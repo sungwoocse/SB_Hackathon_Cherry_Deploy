@@ -81,6 +81,10 @@ class InMemoryDeployTaskRepository:
         successes.sort(key=lambda t: t.completed_at or utc_now(), reverse=True)
         return successes[:limit]
 
+    async def get_recent_tasks(self, limit: int = 5) -> list[DeployTask]:
+        ordered = sorted(self.tasks.values(), key=lambda t: t.started_at, reverse=True)
+        return ordered[:limit]
+
 
 class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:  # noqa: N802
@@ -228,8 +232,8 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_describe_blue_green_state_defaults_in_dev_mode(self) -> None:
         state = await self.service.describe_blue_green_state()
         self.assertEqual(state["active_slot"], "unknown")
-        self.assertEqual(state["next_cutover_target"], "dev-server")
-        self.assertIsNone(state["standby_slot"])
+        self.assertEqual(state["next_cutover_target"], "green")
+        self.assertEqual(state["standby_slot"], "green")
 
     async def test_preview_contains_timeline_status_and_warnings(self) -> None:
         preview = await self.service.get_preview()
@@ -238,6 +242,21 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
         for entry in preview["timeline_preview"]:
             self.assertIn("status", entry)
             self.assertIn(entry["status"], {"completed", "upcoming", "pending"})
+            self.assertIn("metadata", entry)
+            self.assertTrue(entry["metadata"].get("plan"))
+            self.assertIn("checks", entry["metadata"])
+            self.assertIn("eta_seconds", entry["metadata"])
+
+    async def test_task_summary_includes_timezone(self) -> None:
+        request = DeployRequest(branch="deploy")
+        task = await self.service.create_task(branch=request.branch or "")
+        await self.service.run_pipeline(task.task_id, request.branch or "")
+        summaries = await self.service.list_recent_tasks(limit=1)
+        self.assertEqual(len(summaries), 1)
+        summary = summaries[0]
+        self.assertEqual(summary["timezone"], self.service.display_timezone_name)
+        self.assertIsNotNone(summary["started_at"])
+        self.assertEqual(summary["started_at"].tzinfo, self.service.display_timezone)
 
     async def test_run_pipeline_serializes_concurrent_invocations(self) -> None:
         request = DeployRequest(branch="deploy")
