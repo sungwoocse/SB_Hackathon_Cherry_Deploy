@@ -2,3 +2,5 @@
 mongodb/
 mongodb-data/
 mongodb-linux-x86_64-amazon2023-7.0.12.tgz
+__pycache__/
+*.py[cod]
