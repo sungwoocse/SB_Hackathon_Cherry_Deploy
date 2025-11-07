@@ -118,6 +118,9 @@ class DeployTaskSummary(BaseModel):
     completed_at: Optional[datetime] = Field(
         default=None, description="UTC completion timestamp when finished."
     )
+    actor: Optional[str] = Field(
+        default=None, description="Resolved operator (from metadata.actor/requested_by)."
+    )
     summary: Optional[Dict[str, Any]] = Field(
         default=None, description="Summary info stored once the pipeline completes."
     )

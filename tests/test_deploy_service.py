@@ -124,15 +124,18 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertIn(stage.value, stored.metadata)
             self.assertIn("dry_run", stored.metadata[stage.value])
-        self.assertIn("summary", stored.metadata)
-        summary = stored.metadata["summary"]
-        self.assertEqual(summary["result"], "success")
+        self.assertIn("actor", stored.metadata)
+        summary = stored.metadata.get("summary", {})
+        self.assertEqual(summary.get("result"), "success")
         self.assertIn("preflight", summary)
+        self.assertIn("git_commit", summary)
+        self.assertIn("actor", summary)
         preflight = summary["preflight"]
         self.assertIn("cost_estimate", preflight)
         self.assertIn("risk_assessment", preflight)
         self.assertIn("llm_preview", preflight)
         self.assertIn("summary", preflight["llm_preview"])
+        self.assertTrue(preflight["risk_assessment"]["notes"])
 
     async def test_get_task_returns_document(self) -> None:
         request = DeployRequest(branch="main")
@@ -227,6 +230,14 @@ class DeployServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["active_slot"], "unknown")
         self.assertEqual(state["next_cutover_target"], "dev-server")
         self.assertIsNone(state["standby_slot"])
+
+    async def test_preview_contains_timeline_status_and_warnings(self) -> None:
+        preview = await self.service.get_preview()
+        self.assertTrue(preview["warnings"])
+        self.assertTrue(preview["timeline_preview"])
+        for entry in preview["timeline_preview"]:
+            self.assertIn("status", entry)
+            self.assertIn(entry["status"], {"completed", "upcoming", "pending"})
 
     async def test_run_pipeline_serializes_concurrent_invocations(self) -> None:
         request = DeployRequest(branch="deploy")

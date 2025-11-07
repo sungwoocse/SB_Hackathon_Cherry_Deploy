@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+import getpass
 import json
 import google.generativeai as genai
 
@@ -182,6 +183,7 @@ class DeployService:
         stage_snapshots: Dict[str, Any],
     ) -> list[Dict[str, Any]]:
         timeline: list[Dict[str, Any]] = []
+        marked_active = False
         for key in STAGE_SEQUENCE:
             timeline.append(
                 {
@@ -189,21 +191,39 @@ class DeployService:
                     "label": STAGE_LABELS.get(key, key),
                     "expected_seconds": stage_seconds.get(key),
                     "completed": key in stage_snapshots,
+                    "status": self._derive_stage_status(key, stage_snapshots, marked_active),
                     "metadata": stage_snapshots.get(key),
+                }
+            )
+            if timeline[-1]["status"] == "upcoming":
+                marked_active = True
+        return timeline
+
+    def _build_estimated_timeline(self, stage_seconds: Dict[str, int]) -> list[Dict[str, Any]]:
+        timeline: list[Dict[str, Any]] = []
+        for index, key in enumerate(STAGE_SEQUENCE):
+            timeline.append(
+                {
+                    "stage": key,
+                    "label": STAGE_LABELS.get(key, key),
+                    "expected_seconds": stage_seconds.get(key),
+                    "completed": False,
+                    "status": "upcoming" if index == 0 else "pending",
                 }
             )
         return timeline
 
-    def _build_estimated_timeline(self, stage_seconds: Dict[str, int]) -> list[Dict[str, Any]]:
-        return [
-            {
-                "stage": key,
-                "label": STAGE_LABELS.get(key, key),
-                "expected_seconds": stage_seconds.get(key),
-                "completed": False,
-            }
-            for key in STAGE_SEQUENCE
-        ]
+    def _derive_stage_status(
+        self,
+        stage: str,
+        stage_snapshots: Dict[str, Any],
+        marked_active: bool,
+    ) -> str:
+        if stage in stage_snapshots:
+            return "completed"
+        if not marked_active:
+            return "upcoming"
+        return "pending"
 
     def _estimate_stage_seconds(self, diff_stats: Dict[str, Any]) -> Dict[str, int]:
         file_count = diff_stats.get("file_count", 0)
@@ -279,6 +299,9 @@ class DeployService:
         failure_context = metadata.get("failure_context")
         if failure_context:
             context["failure_context"] = failure_context
+        actor = metadata.get("actor") or metadata.get("requested_by")
+        if actor:
+            context["actor"] = actor
         return context
 
     async def create_task(self, *, branch: str) -> DeployTask:
@@ -288,13 +311,15 @@ class DeployService:
                 f"Branch '{branch}' is not allowed. Allowed branches: {sorted(self.allowed_branches)}"
             )
         task_id = uuid4().hex
+        metadata: Dict[str, Any] = {
+            "branch": branch,
+            "action": "deploy",
+        }
+        metadata = self._attach_actor_metadata(metadata)
         task = await self.repository.create_task(
             DeployTaskCreate(
                 task_id=task_id,
-                metadata={
-                    "branch": branch,
-                    "action": "deploy",
-                },
+                metadata=metadata,
             )
         )
         return task
@@ -332,12 +357,14 @@ class DeployService:
         task = await self.repository.create_task(
             DeployTaskCreate(
                 task_id=uuid4().hex,
-                metadata={
-                    "branch": branch,
-                    "action": "rollback",
-                    "from_commit": current_commit,
-                    "to_commit": target_commit,
-                },
+                metadata=self._attach_actor_metadata(
+                    {
+                        "branch": branch,
+                        "action": "rollback",
+                        "from_commit": current_commit,
+                        "to_commit": target_commit,
+                    }
+                ),
             )
         )
 
@@ -443,6 +470,8 @@ class DeployService:
 
                 await self.repository.mark_status(task_id, DeployStatus.COMPLETED)
                 summary_commit = await self._get_current_commit()
+                commit_details = await self._get_commit_details()
+                actor_identity = self._resolve_actor_identity()
                 await self.repository.update_task(
                     task_id,
                     DeployTaskUpdate(
@@ -451,6 +480,8 @@ class DeployService:
                                 "completed_at": utc_now().isoformat(),
                                 "result": "success",
                                 "commit": summary_commit,
+                                "git_commit": commit_details,
+                                "actor": actor_identity,
                             }
                         }
                     ),
@@ -530,6 +561,8 @@ class DeployService:
         ) = await self._prepare_preview_inputs()
         llm_preview = await self._generate_llm_preview(diff_context)
         warnings = list(dict.fromkeys(warnings))
+        if not warnings:
+            warnings.append("Diff scan produced no warnings; run smoke tests before cutover.")
         risk_assessment = self._build_risk_assessment(diff_stats, warnings)
         snapshot = {
             "cost_estimate": cost_estimate,
@@ -821,6 +854,31 @@ class DeployService:
             raise RuntimeError("Unable to resolve current commit SHA")
         return stdout
 
+    async def _get_commit_details(self) -> Dict[str, Any]:
+        if self.dry_run:
+            actor = self._resolve_actor_identity()
+            return {
+                "sha": "dry-run",
+                "author": actor,
+                "authored_at": utc_now().isoformat(),
+            }
+        result = await self._run_command(
+            ["git", "log", "-1", "--pretty=format:%H%x1f%an%x1f%ae%x1f%ad"],
+            cwd=self.chatbot_repo_path,
+            description="Describe latest commit metadata",
+        )
+        stdout = result.get("stdout", "").strip()
+        sha, author_name, author_email, authored_at = (stdout.split("\x1f") + ["", "", "", ""])[:4]
+        payload: Dict[str, Any] = {
+            "sha": sha or None,
+            "author": {
+                "name": author_name or None,
+                "email": author_email or None,
+            },
+            "authored_at": authored_at or None,
+        }
+        return payload
+
     async def _resolve_preview_context(self) -> Dict[str, Any]:
         context: Dict[str, Any] = {
             "ready": False,
@@ -998,6 +1056,8 @@ class DeployService:
             warnings.append(str(diff_context["reason"]))
 
         warnings = list(dict.fromkeys(warnings))
+        if not warnings:
+            warnings.append("Diff scan produced no warnings; run smoke tests before cutover.")
         risk_assessment = self._build_risk_assessment(diff_stats, warnings)
         blue_green_plan = await self.describe_blue_green_state()
 
@@ -1263,3 +1323,36 @@ class DeployService:
         payload["highlights"] = highlight_lines[:3]
         payload["risks"] = risk_lines[:3]
         return payload
+
+    def _resolve_actor_identity(self) -> Dict[str, Optional[str]]:
+        env_name = (
+            os.getenv("DEPLOY_ACTOR")
+            or os.getenv("DEPLOY_REQUESTER")
+            or os.getenv("GITHUB_ACTOR")
+            or os.getenv("USER")
+            or ""
+        ).strip()
+        try:
+            system_name = getpass.getuser()
+        except Exception:  # pragma: no cover - defensive
+            system_name = ""
+        name = env_name or system_name or "cherry-operator"
+        email = (
+            os.getenv("DEPLOY_ACTOR_EMAIL")
+            or os.getenv("DEPLOY_REQUESTER_EMAIL")
+            or os.getenv("GITHUB_ACTOR_EMAIL")
+            or os.getenv("EMAIL")
+            or ""
+        ).strip() or None
+        return {"name": name, "email": email}
+
+    def _attach_actor_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        enriched = dict(metadata)
+        actor = self._resolve_actor_identity()
+        if actor.get("name"):
+            enriched.setdefault("actor", actor["name"])
+            enriched.setdefault("requested_by", actor["name"])
+        if actor.get("email"):
+            enriched.setdefault("requested_by_email", actor["email"])
+        enriched.setdefault("trigger", enriched.get("trigger") or "api")
+        return enriched

@@ -374,7 +374,7 @@ components:
           type: string
     DeployTimelineEntry:
       type: object
-      required: [stage, label, completed]
+      required: [stage, label, completed, status]
       properties:
         stage:
           $ref: '#/components/schemas/DeployStatusEnum'
@@ -386,6 +386,9 @@ components:
           nullable: true
         completed:
           type: boolean
+        status:
+          type: string
+          description: "completed, upcoming, or pending"
         metadata:
           type: object
           nullable: true
@@ -415,6 +418,10 @@ components:
           type: string
           format: date-time
           nullable: true
+        actor:
+          type: string
+          nullable: true
+          description: Operator or requester associated with the task.
         summary:
           type: object
           nullable: true
