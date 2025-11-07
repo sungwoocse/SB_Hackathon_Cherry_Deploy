@@ -15,6 +15,7 @@ except ImportError as exc:  # pragma: no cover - dependency managed via requirem
 logger = logging.getLogger("cherry-deploy.chat")
 
 GEMINI_MODEL_NAME = "gemini-2.5-flash"
+GEMINI_MAX_OUTPUT_TOKENS = 3500
 
 
 class GeminiChatService:
@@ -47,7 +48,12 @@ class GeminiChatService:
     def _call_gemini(self, prompt: str) -> str:
         genai.configure(api_key=self.api_key)
         model = genai.GenerativeModel(self.model_name)
-        response: Any = model.generate_content(prompt)
+        response: Any = model.generate_content(
+            prompt,
+            generation_config={
+                "max_output_tokens": GEMINI_MAX_OUTPUT_TOKENS,
+            },
+        )
         if hasattr(response, "text") and response.text:
             return response.text.strip()
 
