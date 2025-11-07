@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from domain import DeployStatus
@@ -8,6 +10,8 @@ from schemas import (
     DeployRequest,
     DeployResponse,
     DeployStatusResponse,
+    DeployTaskLogResponse,
+    DeployTaskSummary,
     RollbackRequest,
 )
 from services import DeployService
@@ -42,7 +46,21 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
             branch,
         )
 
-        return DeployResponse(task_id=task.task_id, status=task.status)
+        try:
+            eta_minutes = await deploy_service.estimate_runtime_minutes()
+        except Exception:  # pragma: no cover - fallback if preview fails
+            eta_minutes = 8
+
+        return DeployResponse(
+            task_id=task.task_id,
+            status=task.status,
+            branch=branch,
+            action="deploy",
+            queued_at=task.started_at,
+            estimated_duration_minutes=eta_minutes,
+            context={},
+            dev_server_restart_planned=deploy_service.dev_server_mode,
+        )
 
     @router.get(
         "/status/{task_id}",
@@ -55,13 +73,18 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         except RuntimeError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+        stages = deploy_service.build_stage_snapshot(task.metadata)
+        failure_context = task.metadata.get("failure_context")
+
         return DeployStatusResponse(
             task_id=task.task_id,
             status=task.status,
             metadata=task.metadata,
+            stages=stages,
             started_at=task.started_at,
             completed_at=task.completed_at,
             error_log=task.error_log,
+            failure_context=failure_context,
         )
 
     @router.get(
@@ -69,8 +92,11 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         response_model=DeployPreviewResponse,
         summary="Show expected actions, risk, and cost for the next deploy run",
     )
-    async def preview() -> DeployPreviewResponse:
-        payload = await deploy_service.get_preview()
+    async def preview(task_id: Optional[str] = None) -> DeployPreviewResponse:
+        try:
+            payload = await deploy_service.get_preview(task_id=task_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         return DeployPreviewResponse.model_validate(payload)
 
     @router.post(
@@ -97,6 +123,45 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
             current_commit,
         )
 
-        return DeployResponse(task_id=task.task_id, status=task.status)
+        try:
+            eta_minutes = await deploy_service.estimate_runtime_minutes()
+        except Exception:
+            eta_minutes = 8
+
+        context = {"from_commit": current_commit, "to_commit": target_commit}
+
+        return DeployResponse(
+            task_id=task.task_id,
+            status=task.status,
+            branch=branch_value,
+            action="rollback",
+            queued_at=task.started_at,
+            estimated_duration_minutes=eta_minutes,
+            context=context,
+            dev_server_restart_planned=deploy_service.dev_server_mode,
+        )
+
+    @router.get(
+        "/tasks/recent",
+        response_model=list[DeployTaskSummary],
+        summary="List recent deploy/rollback tasks.",
+    )
+    async def list_recent_tasks(limit: int = 5) -> list[DeployTaskSummary]:
+        bounded_limit = max(1, min(limit, 20))
+        summaries = await deploy_service.list_recent_tasks(limit=bounded_limit)
+        return [DeployTaskSummary.model_validate(summary) for summary in summaries]
+
+    @router.get(
+        "/tasks/{task_id}/logs",
+        response_model=DeployTaskLogResponse,
+        summary="Return stdout/stderr metadata for a specific task.",
+    )
+    async def task_logs(task_id: str) -> DeployTaskLogResponse:
+        try:
+            payload = await deploy_service.get_task_logs(task_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        payload["stages"] = deploy_service.build_stage_snapshot(payload.get("metadata", {}))
+        return DeployTaskLogResponse.model_validate(payload)
 
     return router

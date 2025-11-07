@@ -82,6 +82,21 @@ class InMemoryDeployTaskRepository:
         )
         return successes[:limit]
 
+    async def get_recent_tasks(self, limit: int = 5) -> list[DeployTask]:
+        tasks = sorted(
+            self._tasks.values(),
+            key=lambda t: t.started_at,
+            reverse=True,
+        )
+        return tasks[:limit]
+
+    async def get_latest_task(self) -> Optional[DeployTask]:
+        tasks = await self.get_recent_tasks(limit=1)
+        return tasks[0] if tasks else None
+
+    async def ping(self) -> bool:  # pragma: no cover - always true for in-memory
+        return True
+
 
 def _merge_metadata(base: dict, extra: dict) -> None:
     for key, value in extra.items():

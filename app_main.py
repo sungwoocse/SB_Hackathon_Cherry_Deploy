@@ -15,7 +15,11 @@ if str(API_CODE_PATH) not in sys.path:
 
 from env_loader import load_local_env  # noqa: E402
 from repositories import DeployTaskRepository, InMemoryDeployTaskRepository  # noqa: E402
-from routers import build_chat_router, build_deploy_router, health_router  # noqa: E402
+from routers import (  # noqa: E402
+    build_chat_router,
+    build_deploy_router,
+    build_health_router,
+)
 from services import DeployService, GeminiChatService  # noqa: E402
 from settings import get_settings  # noqa: E402
 
@@ -46,7 +50,7 @@ deploy_service = DeployService(deploy_repository, settings)
 
 app.include_router(build_chat_router(chat_service))
 app.include_router(build_deploy_router(deploy_service))
-app.include_router(health_router)
+app.include_router(build_health_router(deploy_service))
 
 
 @app.on_event("startup")

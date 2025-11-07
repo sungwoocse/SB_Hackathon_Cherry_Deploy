@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import shutil
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import google.generativeai as genai
@@ -19,6 +20,30 @@ from settings import Settings
 
 
 logger = logging.getLogger("cherry-deploy.deploy")
+
+STAGE_SEQUENCE: List[str] = [
+    DeployStatus.RUNNING_CLONE.value,
+    DeployStatus.RUNNING_BUILD.value,
+    DeployStatus.RUNNING_CUTOVER.value,
+    DeployStatus.RUNNING_OBSERVABILITY.value,
+]
+
+STAGE_LABELS: Dict[str, str] = {
+    DeployStatus.RUNNING_CLONE.value: "Git sync & checkout",
+    DeployStatus.RUNNING_BUILD.value: "Install & build frontend",
+    DeployStatus.RUNNING_CUTOVER.value: "Blue/Green cutover",
+    DeployStatus.RUNNING_OBSERVABILITY.value: "Observability checks",
+}
+
+STAGE_DEFAULT_SECONDS: Dict[str, int] = {
+    DeployStatus.RUNNING_CLONE.value: 35,
+    DeployStatus.RUNNING_BUILD.value: 90,
+    DeployStatus.RUNNING_CUTOVER.value: 25,
+    DeployStatus.RUNNING_OBSERVABILITY.value: 20,
+}
+
+ESTIMATED_DEPLOY_HOURLY_COST = 6.0  # rough EC2/engineer blended cost per hour (USD)
+COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 class AsyncReentrantLock:
@@ -109,6 +134,7 @@ class DeployService:
         self.frontend_build_output_path = self._resolve_output_path(
             settings.frontend_build_output_subdir
         )
+        self.dev_server_mode = self.frontend_build_output_path is None
         self._pipeline_lock = AsyncReentrantLock()
 
     def _resolve_frontend_path(self, subdir: str) -> Path:
@@ -133,6 +159,116 @@ class DeployService:
         if not command:
             return []
         return shlex.split(command)
+
+    @staticmethod
+    def _looks_like_commit(value: Optional[str]) -> bool:
+        return bool(value and COMMIT_SHA_PATTERN.match(value))
+
+    def _extract_stage_snapshots(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        snapshots: Dict[str, Any] = {}
+        for key in STAGE_SEQUENCE:
+            if key in metadata:
+                snapshots[key] = metadata[key]
+        return snapshots
+
+    def build_stage_snapshot(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Expose stage data for routers/consumers."""
+        return self._extract_stage_snapshots(metadata)
+
+    def _build_timeline_from_stage_data(
+        self,
+        stage_seconds: Dict[str, int],
+        stage_snapshots: Dict[str, Any],
+    ) -> list[Dict[str, Any]]:
+        timeline: list[Dict[str, Any]] = []
+        for key in STAGE_SEQUENCE:
+            timeline.append(
+                {
+                    "stage": key,
+                    "label": STAGE_LABELS.get(key, key),
+                    "expected_seconds": stage_seconds.get(key),
+                    "completed": key in stage_snapshots,
+                    "metadata": stage_snapshots.get(key),
+                }
+            )
+        return timeline
+
+    def _build_estimated_timeline(self, stage_seconds: Dict[str, int]) -> list[Dict[str, Any]]:
+        return [
+            {
+                "stage": key,
+                "label": STAGE_LABELS.get(key, key),
+                "expected_seconds": stage_seconds.get(key),
+                "completed": False,
+            }
+            for key in STAGE_SEQUENCE
+        ]
+
+    def _estimate_stage_seconds(self, diff_stats: Dict[str, Any]) -> Dict[str, int]:
+        file_count = diff_stats.get("file_count", 0)
+        lockfile = diff_stats.get("lockfile_changed", False)
+        config = diff_stats.get("config_changed", False)
+
+        clone_seconds = STAGE_DEFAULT_SECONDS[DeployStatus.RUNNING_CLONE.value] + min(20, file_count)
+
+        build_seconds = STAGE_DEFAULT_SECONDS[DeployStatus.RUNNING_BUILD.value] + file_count * 5
+        if lockfile:
+            build_seconds += 45
+        if config:
+            build_seconds += 15
+        build_seconds = min(build_seconds, 420)
+
+        cutover_seconds = STAGE_DEFAULT_SECONDS[DeployStatus.RUNNING_CUTOVER.value]
+        observability_seconds = STAGE_DEFAULT_SECONDS[DeployStatus.RUNNING_OBSERVABILITY.value]
+
+        return {
+            DeployStatus.RUNNING_CLONE.value: clone_seconds,
+            DeployStatus.RUNNING_BUILD.value: build_seconds,
+            DeployStatus.RUNNING_CUTOVER.value: cutover_seconds,
+            DeployStatus.RUNNING_OBSERVABILITY.value: observability_seconds,
+        }
+
+    @staticmethod
+    def _estimate_cost_summary(stage_seconds: Dict[str, int], diff_stats: Dict[str, Any]) -> Dict[str, Any]:
+        total_seconds = sum(stage_seconds.values())
+        runtime_minutes = max(1, round(total_seconds / 60))
+        hourly_cost = round((total_seconds / 3600) * ESTIMATED_DEPLOY_HOURLY_COST, 2)
+        return {
+            "runtime_minutes": runtime_minutes,
+            "hourly_cost": hourly_cost,
+            "inputs": {
+                "files_changed": diff_stats.get("file_count", 0),
+                "lockfile_changed": diff_stats.get("lockfile_changed", False),
+            },
+        }
+
+    def _build_risk_assessment(self, diff_stats: Dict[str, Any], warnings: List[str]) -> Dict[str, Any]:
+        risk_level = diff_stats.get("risk_level", "unknown")
+        return {
+            "risk_level": risk_level,
+            "files_changed": diff_stats.get("file_count", 0),
+            "downtime": "Minimal (Nginx keeps previous color live during cutover)",
+            "rollback": "Symlink swap to previous color remains available",
+            "notes": list(dict.fromkeys(warnings)),
+        }
+
+    def _assemble_task_context(self, task: DeployTask) -> Dict[str, Any]:
+        metadata = task.metadata or {}
+        context: Dict[str, Any] = {
+            "task_id": task.task_id,
+            "status": task.status,
+            "branch": metadata.get("branch", self.default_branch),
+            "action": metadata.get("action", "deploy"),
+            "started_at": task.started_at,
+            "completed_at": task.completed_at,
+        }
+        summary = metadata.get("summary")
+        if isinstance(summary, dict):
+            context["summary"] = summary
+        failure_context = metadata.get("failure_context")
+        if failure_context:
+            context["failure_context"] = failure_context
+        return context
 
     async def create_task(self, *, branch: str) -> DeployTask:
         branch = (branch or self.default_branch).strip()
@@ -574,8 +710,134 @@ class DeployService:
             raise RuntimeError("Unable to resolve current commit SHA")
         return stdout
 
-    async def get_preview(self) -> Dict[str, Any]:
-        """Return a static preview payload with risk/cost notes for the deploy command."""
+    async def _resolve_preview_context(self) -> Dict[str, Any]:
+        context: Dict[str, Any] = {
+            "ready": False,
+            "reason": None,
+            "base_commit": None,
+            "head_commit": None,
+            "diff_output": "",
+            "diff_stats": {},
+        }
+
+        try:
+            successes = await self.repository.get_recent_successes(
+                branch=self.default_branch,
+                limit=1,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Failed to read recent successes: %s", exc)
+            context["reason"] = f"Unable to read deploy history: {exc}"
+            return context
+
+        base_commit: Optional[str] = None
+        if successes:
+            summary = successes[0].metadata.get("summary")
+            if isinstance(summary, dict):
+                base_commit = summary.get("commit")
+
+        if not self._looks_like_commit(base_commit):
+            context["reason"] = "No previous successful deployment to diff against."
+            context["base_commit"] = base_commit
+            return context
+
+        context["base_commit"] = base_commit
+
+        head_commit = await self._get_current_commit()
+        context["head_commit"] = head_commit
+        if not self._looks_like_commit(head_commit):
+            context["reason"] = "Current HEAD is not a valid commit."
+            return context
+        if head_commit == base_commit:
+            context["reason"] = "Working tree matches last successful deployment."
+            return context
+
+        diff_output, diff_stats = await self._collect_diff_details(base_commit)
+        context.update(
+            {
+                "ready": True,
+                "diff_output": diff_output,
+                "diff_stats": diff_stats,
+            }
+        )
+        return context
+
+    async def _collect_diff_details(self, base_commit: str) -> tuple[str, Dict[str, Any]]:
+        diff_result = await self._run_command(
+            ["git", "diff", "--name-status", f"{base_commit}..HEAD"],
+            cwd=self.chatbot_repo_path,
+            description="Collect diff summary for preview",
+        )
+        diff_output = diff_result.get("stdout", "").strip()
+        diff_stats = self._summarize_diff(diff_output)
+        return diff_output, diff_stats
+
+    @staticmethod
+    def _summarize_diff(diff_output: str) -> Dict[str, Any]:
+        stats: Dict[str, Any] = {
+            "file_count": 0,
+            "added": 0,
+            "modified": 0,
+            "deleted": 0,
+            "lockfile_changed": False,
+            "config_changed": False,
+            "env_changed": False,
+            "paths": [],
+            "warnings": [],
+        }
+
+        if not diff_output:
+            stats["risk_level"] = "low"
+            return stats
+
+        warnings: List[str] = []
+        for raw_line in diff_output.splitlines():
+            parts = raw_line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+            status_code, path = parts
+            stats["file_count"] += 1
+            stats["paths"].append(path)
+            code = status_code.strip().upper() or "M"
+            if code.startswith("A"):
+                stats["added"] += 1
+            elif code.startswith("D"):
+                stats["deleted"] += 1
+            else:
+                stats["modified"] += 1
+
+            lowered = path.lower()
+            if any(token in lowered for token in {"package-lock.json", "pnpm-lock.yaml", "yarn.lock"}):
+                stats["lockfile_changed"] = True
+            if lowered.endswith(".env") or "secrets" in lowered:
+                stats["env_changed"] = True
+            if any(lowered.endswith(ext) for ext in {".yml", ".yaml", ".json"}) and (
+                "infra" in lowered or "deploy" in lowered or "config" in lowered
+            ):
+                stats["config_changed"] = True
+
+        if stats["lockfile_changed"]:
+            warnings.append("Detected lockfile changes; npm install may take longer.")
+        if stats["env_changed"]:
+            warnings.append("Environment-related file modified; verify secrets.")
+        if stats["config_changed"]:
+            warnings.append("Configuration files updated; double-check blue/green sync.")
+        if stats["file_count"] >= 20:
+            warnings.append("Large diff detected; smoke-test both frontend and API.")
+
+        if stats["file_count"] < 5 and not stats["env_changed"] and not stats["config_changed"]:
+            risk = "low"
+        elif stats["file_count"] < 15 and not stats["env_changed"]:
+            risk = "medium"
+        else:
+            risk = "high"
+
+        stats["risk_level"] = risk
+        stats["warnings"] = warnings
+        return stats
+
+    async def get_preview(self, task_id: Optional[str] = None) -> Dict[str, Any]:
+        """Return a preview payload with risk/cost notes for the deploy command."""
         command_plan = [
             "git fetch origin",
             f"git checkout -B {self.default_branch} origin/{self.default_branch}",
@@ -597,7 +859,33 @@ class DeployService:
         else:
             command_plan.append("no static cutover (dev-server mode)")
 
-        llm_preview = await self._generate_llm_preview()
+        diff_context = await self._resolve_preview_context()
+        diff_stats = diff_context.get("diff_stats", {})
+        stage_seconds = self._estimate_stage_seconds(diff_stats)
+        timeline_preview = self._build_estimated_timeline(stage_seconds)
+        warnings: List[str] = list(diff_stats.get("warnings", []))
+
+        llm_preview = await self._generate_llm_preview(diff_context)
+        cost_estimate = self._estimate_cost_summary(stage_seconds, diff_stats)
+        risk_assessment = self._build_risk_assessment(diff_stats, warnings)
+
+        task_context: Optional[Dict[str, Any]] = None
+        if task_id:
+            task = await self.repository.get_task(task_id)
+            if not task:
+                raise RuntimeError(f"deploy task not found: {task_id}")
+            stage_snapshots = self._extract_stage_snapshots(task.metadata)
+            timeline_preview = self._build_timeline_from_stage_data(stage_seconds, stage_snapshots)
+            task_context = self._assemble_task_context(task)
+            if task.metadata.get("failure_context"):
+                warnings.append("Task has failure_context metadata attached.")
+            if task.error_log:
+                warnings.append("Task produced an error_log entry.")
+
+        if not diff_context.get("ready") and diff_context.get("reason"):
+            warnings.append(str(diff_context["reason"]))
+
+        warnings = list(dict.fromkeys(warnings))
 
         return {
             "current_branch": self.default_branch,
@@ -607,17 +895,40 @@ class DeployService:
             if self.frontend_build_output_path
             else None,
             "commands": command_plan,
-            "risk_assessment": {
-                "downtime": "Minimal (blue/green swap)",
-                "rollback": "Sym-link revert to previous blue directory",
-                "observability": "Manual Lighthouse check pending automation",
-            },
-            "cost_estimate": {
-                "runtime_minutes": 8,
-                "npm_dependencies": "No extra cost",
-                "lighthouse_tokens": "N/A",
-            },
+            "risk_assessment": risk_assessment,
+            "cost_estimate": cost_estimate,
             "llm_preview": llm_preview,
+            "timeline_preview": timeline_preview,
+            "warnings": warnings,
+            "task_context": task_context,
+        }
+
+    async def estimate_runtime_minutes(self) -> int:
+        diff_context = await self._resolve_preview_context()
+        diff_stats = diff_context.get("diff_stats", {})
+        stage_seconds = self._estimate_stage_seconds(diff_stats)
+        cost_estimate = self._estimate_cost_summary(stage_seconds, diff_stats)
+        return int(cost_estimate.get("runtime_minutes", 8))
+
+    async def list_recent_tasks(self, limit: int = 5) -> list[Dict[str, Any]]:
+        tasks = await self.repository.get_recent_tasks(limit=limit)
+        summaries: list[Dict[str, Any]] = []
+        for task in tasks:
+            summaries.append(self._assemble_task_context(task))
+        return summaries
+
+    async def get_task_logs(self, task_id: str) -> Dict[str, Any]:
+        task = await self.repository.get_task(task_id)
+        if not task:
+            raise RuntimeError(f"deploy task not found: {task_id}")
+        stage_snapshots = self._extract_stage_snapshots(task.metadata)
+        return {
+            "task_id": task.task_id,
+            "status": task.status,
+            "stages": stage_snapshots,
+            "metadata": task.metadata,
+            "error_log": task.error_log,
+            "failure_context": task.metadata.get("failure_context"),
         }
 
     async def _run_command(
@@ -705,57 +1016,27 @@ class DeployService:
             "rolled_back_to": target_commit,
         }
 
-    async def _generate_llm_preview(self) -> Dict[str, Any]:
+    async def _generate_llm_preview(self, diff_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.settings.gemini_api_key:
             return {
                 "status": "skipped",
                 "reason": "Gemini API key not configured.",
             }
 
-        try:
-            successes = await self.repository.get_recent_successes(
-                branch=self.default_branch,
-                limit=1,
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Failed to fetch recent successes for preview: %s", exc)
+        context = diff_context or await self._resolve_preview_context()
+        base_commit = context.get("base_commit")
+        head_commit = context.get("head_commit")
+        diff_output = context.get("diff_output", "")
+
+        if not context.get("ready"):
             return {
                 "status": "skipped",
-                "reason": f"Unable to read deploy history: {exc}",
+                "reason": context.get("reason", "Diff context unavailable."),
+                "base_commit": base_commit,
+                "target_commit": head_commit,
+                "diff_snippet": diff_output,
             }
 
-        base_commit: Optional[str] = None
-        if successes:
-            summary = successes[0].metadata.get("summary")
-            if isinstance(summary, dict):
-                base_commit = summary.get("commit")
-
-        if not base_commit:
-            return {
-                "status": "skipped",
-                "reason": "No previous successful deployment to diff against.",
-            }
-
-        head_commit_meta = await self._run_command(
-            ["git", "rev-parse", "HEAD"],
-            cwd=self.chatbot_repo_path,
-            description="Resolve current commit SHA for preview",
-        )
-        head_commit = head_commit_meta["stdout"].strip()
-        if head_commit == base_commit:
-            return {
-                "status": "skipped",
-                "reason": "Working tree matches last successful deployment.",
-            }
-
-        diff_command = self.settings.preview_diff_command.format(base_commit=base_commit)
-        diff_args = shlex.split(diff_command)
-        diff_result = await self._run_command(
-            diff_args,
-            cwd=self.chatbot_repo_path,
-            description="Collect diff summary for preview",
-        )
-        diff_output = diff_result.get("stdout", "").strip()
         if len(diff_output) > self.settings.preview_diff_max_chars:
             diff_output = diff_output[: self.settings.preview_diff_max_chars] + "\n… (truncated)"
 

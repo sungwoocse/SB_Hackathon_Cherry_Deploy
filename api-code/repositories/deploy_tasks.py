@@ -91,3 +91,22 @@ class DeployTaskRepository:
         )
         documents = await cursor.to_list(length=limit)
         return [DeployTask.from_mongo(doc) for doc in documents]
+
+    async def get_recent_tasks(self, limit: int = 5) -> list[DeployTask]:
+        cursor = self._tasks.find().sort("started_at", -1).limit(limit)
+        documents = await cursor.to_list(length=limit)
+        return [DeployTask.from_mongo(doc) for doc in documents]
+
+    async def get_latest_task(self) -> Optional[DeployTask]:
+        cursor = self._tasks.find().sort("started_at", -1).limit(1)
+        documents = await cursor.to_list(length=1)
+        if not documents:
+            return None
+        return DeployTask.from_mongo(documents[0])
+
+    async def ping(self) -> bool:
+        try:
+            await self._db.command("ping")
+            return True
+        except Exception:  # pragma: no cover - defensive
+            return False
