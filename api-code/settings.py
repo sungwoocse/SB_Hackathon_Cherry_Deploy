@@ -94,6 +94,41 @@ class Settings(BaseModel):
         alias="PREVIEW_LLM_MODEL",
         description="Generative model used to summarize upcoming deploy diffs.",
     )
+    login_user: str = Field(
+        default="cherry",
+        alias="LOGIN_USER",
+        description="Static operator username accepted by the API login endpoint.",
+    )
+    login_password: str = Field(
+        default="coffee",
+        alias="LOGIN_PASSWORD",
+        description="Static operator password accepted by the API login endpoint.",
+    )
+    jwt_secret_key: str = Field(
+        default="change-me",
+        alias="JWT_SECRET_KEY",
+        description="Secret key used to sign authentication JWT cookies.",
+    )
+    jwt_expire_minutes: int = Field(
+        default=60,
+        alias="JWT_EXPIRE_MINUTES",
+        description="Validity window (minutes) for authentication cookies.",
+    )
+    auth_cookie_name: str = Field(
+        default="auth_token",
+        alias="AUTH_COOKIE_NAME",
+        description="Cookie key that stores the signed authentication token.",
+    )
+    auth_cookie_secure: bool = Field(
+        default=True,
+        alias="AUTH_COOKIE_SECURE",
+        description="Whether to set the Secure flag on the auth cookie.",
+    )
+    auth_cookie_domain: Optional[str] = Field(
+        default=None,
+        alias="AUTH_COOKIE_DOMAIN",
+        description="Optional cookie domain override for the auth cookie.",
+    )
     preview_use_github_compare: bool = Field(
         default=False,
         alias="PREVIEW_USE_GITHUB_COMPARE",
