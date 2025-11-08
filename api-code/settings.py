@@ -94,6 +94,31 @@ class Settings(BaseModel):
         alias="PREVIEW_LLM_MODEL",
         description="Generative model used to summarize upcoming deploy diffs.",
     )
+    preview_use_github_compare: bool = Field(
+        default=False,
+        alias="PREVIEW_USE_GITHUB_COMPARE",
+        description="When true, preview diffs are sourced from the GitHub Compare API when available.",
+    )
+    github_compare_repo: Optional[str] = Field(
+        default=None,
+        alias="GITHUB_COMPARE_REPO",
+        description="owner/repo slug used for the GitHub Compare API (e.g., org/project).",
+    )
+    github_compare_head_ref: Optional[str] = Field(
+        default=None,
+        alias="GITHUB_COMPARE_HEAD_REF",
+        description="Optional ref (branch/sha) passed as the head parameter. Defaults to current HEAD.",
+    )
+    github_compare_token: Optional[str] = Field(
+        default=None,
+        alias="GITHUB_COMPARE_TOKEN",
+        description="Read-only GitHub token used for compare API requests.",
+    )
+    github_compare_cache_seconds: int = Field(
+        default=60,
+        alias="GITHUB_COMPARE_CACHE_SECONDS",
+        description="TTL for cached GitHub Compare responses (seconds).",
+    )
     preview_diff_command: str = Field(
         default="git diff --name-status {base_commit}..HEAD",
         alias="PREVIEW_DIFF_COMMAND",

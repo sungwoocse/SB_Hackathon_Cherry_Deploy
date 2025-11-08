@@ -96,6 +96,9 @@ paths:
   /api/v1/preview:
     get:
       summary: Describe upcoming deploy steps, risks, and costs
+      description: >
+        Returns risk/cost estimates, warnings, and timeline data using diff statistics from the local
+        working tree or (when configured) the GitHub Compare API with a short-lived cache/fallback.
       tags: [deploy]
       parameters:
         - in: query
@@ -319,6 +322,8 @@ components:
         - timeline_preview
         - warnings
         - blue_green_plan
+        - diff_source
+        - diff_stats
       properties:
         current_branch:
           type: string
@@ -365,6 +370,19 @@ components:
           nullable: true
         blue_green_plan:
           $ref: '#/components/schemas/BlueGreenPlan'
+        diff_source:
+          type: string
+          description: Indicates whether diff stats come from the local working tree or the GitHub Compare API.
+          enum: [working_tree, github_compare]
+        diff_stats:
+          type: object
+          additionalProperties: true
+          description: Aggregated diff summary (file counts, sensitivity flags, derived warnings).
+        compare_metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Present when diff_source=github_compare and contains ahead/behind counts plus compare URLs.
     RollbackRequest:
       type: object
       properties:

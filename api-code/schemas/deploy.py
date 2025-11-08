@@ -103,6 +103,18 @@ class DeployPreviewResponse(BaseModel):
         ...,
         description="Active/standby slot snapshot (active_slot, standby_slot, last_cutover_at, next_cutover_target).",
     )
+    diff_source: str = Field(
+        ...,
+        description="Indicates whether diff stats were derived from the local working tree or GitHub Compare API.",
+    )
+    diff_stats: Dict[str, Any] = Field(
+        ...,
+        description="Aggregated diff summary (file counts, sensitivity flags, warnings) used for risk estimation.",
+    )
+    compare_metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="When diff_source=github_compare, metadata about the Compare API call (URLs, ahead/behind counts).",
+    )
 
 
 class RollbackRequest(BaseModel):

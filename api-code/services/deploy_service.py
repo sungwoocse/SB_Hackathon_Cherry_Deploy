@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import textwrap
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,6 +15,7 @@ from uuid import uuid4
 
 import getpass
 import json
+from urllib import error as urllib_error, parse as urllib_parse, request as urllib_request
 from zoneinfo import ZoneInfo
 
 import google.generativeai as genai
@@ -147,7 +149,18 @@ class DeployService:
             settings.frontend_build_output_subdir
         )
         self.dev_server_mode = self.frontend_build_output_path is None
+        self.preview_use_github_compare = settings.preview_use_github_compare
+        self.github_compare_repo = (settings.github_compare_repo or "").strip()
+        self.github_compare_head_ref = (settings.github_compare_head_ref or "").strip()
+        self.github_compare_token = (settings.github_compare_token or "").strip() or None
+        self.github_compare_cache_seconds = max(0, int(settings.github_compare_cache_seconds or 0))
+        self._compare_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
         self._pipeline_lock = AsyncReentrantLock()
+        if self.preview_use_github_compare and not self.github_compare_repo:
+            logger.warning(
+                "PREVIEW_USE_GITHUB_COMPARE is enabled but GITHUB_COMPARE_REPO is not configured; "
+                "falling back to local git diff."
+            )
         try:
             self.display_timezone = ZoneInfo(settings.display_timezone)
             self.display_timezone_name = settings.display_timezone
@@ -954,6 +967,8 @@ class DeployService:
             "head_commit": None,
             "diff_output": "",
             "diff_stats": {},
+            "diff_source": "working_tree",
+            "compare_metadata": None,
         }
 
         try:
@@ -988,12 +1003,27 @@ class DeployService:
             context["reason"] = "Working tree matches last successful deployment."
             return context
 
-        diff_output, diff_stats = await self._collect_diff_details(base_commit)
+        diff_source = "working_tree"
+        compare_metadata: Optional[Dict[str, Any]] = None
+        diff_output: str
+        diff_stats: Dict[str, Any]
+
+        compare_result = await self._fetch_compare_diff(base_commit, head_commit)
+        if compare_result:
+            diff_source = "github_compare"
+            diff_output = compare_result.get("diff_output", "")
+            diff_stats = compare_result.get("diff_stats", {})
+            compare_metadata = compare_result.get("compare_metadata")
+        else:
+            diff_output, diff_stats = await self._collect_diff_details(base_commit)
+
         context.update(
             {
                 "ready": True,
                 "diff_output": diff_output,
                 "diff_stats": diff_stats,
+                "diff_source": diff_source,
+                "compare_metadata": compare_metadata,
             }
         )
         return context
@@ -1005,6 +1035,117 @@ class DeployService:
             description="Collect diff summary for preview",
         )
         diff_output = diff_result.get("stdout", "").strip()
+        diff_stats = self._summarize_diff(diff_output)
+        return diff_output, diff_stats
+
+    def _should_use_github_compare(self) -> bool:
+        return self.preview_use_github_compare and bool(self.github_compare_repo)
+
+    def _github_compare_cache_key(self, base_commit: str, head_ref: str) -> str:
+        return f"{self.github_compare_repo}:{base_commit}:{head_ref}"
+
+    async def _fetch_compare_diff(
+        self, base_commit: str, head_commit: str
+    ) -> Optional[Dict[str, Any]]:
+        if not self._should_use_github_compare():
+            return None
+
+        head_ref = self.github_compare_head_ref or head_commit
+        cache_key = self._github_compare_cache_key(base_commit, head_ref)
+        ttl = self.github_compare_cache_seconds
+        now = time.time()
+        if ttl > 0:
+            cached = self._compare_cache.get(cache_key)
+            if cached and cached[0] > now:
+                return cached[1]
+
+        try:
+            payload = await asyncio.to_thread(
+                self._call_github_compare_api,
+                base_commit,
+                head_ref,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("GitHub Compare API failed, falling back to local diff: %s", exc)
+            return None
+
+        diff_output, diff_stats = self._extract_compare_diff(payload)
+        result: Dict[str, Any] = {
+            "diff_output": diff_output,
+            "diff_stats": diff_stats,
+            "compare_metadata": {
+                "html_url": payload.get("html_url"),
+                "permalink_url": payload.get("permalink_url"),
+                "compare_url": payload.get("compare_url"),
+                "ahead_by": payload.get("ahead_by"),
+                "behind_by": payload.get("behind_by"),
+                "total_commits": payload.get("total_commits"),
+                "status": payload.get("status"),
+                "base_commit": base_commit,
+                "head": head_ref,
+            },
+        }
+
+        if ttl > 0:
+            self._compare_cache[cache_key] = (now + ttl, result)
+        return result
+
+    def _call_github_compare_api(self, base_commit: str, head_ref: str) -> Dict[str, Any]:
+        if not self.github_compare_repo:
+            raise RuntimeError("GitHub compare repository is not configured.")
+
+        base = urllib_parse.quote(base_commit.strip())
+        head = urllib_parse.quote(head_ref.strip())
+        url = f"https://api.github.com/repos/{self.github_compare_repo}/compare/{base}...{head}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "cherry-deploy-preview",
+        }
+        if self.github_compare_token:
+            headers["Authorization"] = f"Bearer {self.github_compare_token}"
+
+        request = urllib_request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib_request.urlopen(request, timeout=15) as response:
+                body = response.read()
+        except urllib_error.HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="ignore")
+            except Exception:  # pragma: no cover - defensive
+                error_body = ""
+            details = error_body or exc.reason
+            raise RuntimeError(f"GitHub compare HTTP {exc.code}: {details}") from exc
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"GitHub compare request failed: {exc.reason}") from exc
+
+        try:
+            return json.loads(body.decode("utf-8"))
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError("Failed to parse GitHub compare response") from exc
+
+    def _extract_compare_diff(self, payload: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        files = payload.get("files")
+        lines: List[str] = []
+        if isinstance(files, list):
+            for entry in files:
+                if not isinstance(entry, dict):
+                    continue
+                filename = entry.get("filename") or entry.get("previous_filename")
+                if not filename:
+                    continue
+                status = (entry.get("status") or "modified").lower()
+                status_map = {
+                    "added": "A",
+                    "modified": "M",
+                    "changed": "M",
+                    "removed": "D",
+                    "deleted": "D",
+                    "renamed": "R",
+                }
+                code = status_map.get(status, "M")
+                lines.append(f"{code}\t{filename}")
+        diff_output = "\n".join(lines)
         diff_stats = self._summarize_diff(diff_output)
         return diff_output, diff_stats
 
@@ -1150,6 +1291,9 @@ class DeployService:
             "warnings": warnings,
             "task_context": task_context,
             "blue_green_plan": blue_green_plan,
+            "diff_source": diff_context.get("diff_source", "working_tree"),
+            "diff_stats": diff_stats,
+            "compare_metadata": diff_context.get("compare_metadata"),
         }
 
     async def estimate_runtime_minutes(self) -> int:
