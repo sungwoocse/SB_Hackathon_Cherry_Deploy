@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from domain import DeployStatus
 from schemas import (
@@ -17,7 +17,7 @@ from schemas import (
 from services import DeployService
 
 
-def build_deploy_router(deploy_service: DeployService) -> APIRouter:
+def build_deploy_router(deploy_service: DeployService, auth_dependency: Callable) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["deploy"])
 
     @router.post(
@@ -29,6 +29,7 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
     async def trigger_deploy(
         payload: DeployRequest,
         background_tasks: BackgroundTasks,
+        user=Depends(auth_dependency),  # type: ignore[valid-type]
     ) -> DeployResponse:
         branch_input = (payload.branch or "").strip() or None
         try:
@@ -67,7 +68,10 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         response_model=DeployStatusResponse,
         summary="Get current deployment state",
     )
-    async def get_status(task_id: str) -> DeployStatusResponse:
+    async def get_status(
+        task_id: str,
+        user=Depends(auth_dependency),  # type: ignore[valid-type]
+    ) -> DeployStatusResponse:
         try:
             task = await deploy_service.get_task(task_id)
         except RuntimeError as exc:
@@ -105,7 +109,10 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         response_model=DeployPreviewResponse,
         summary="Show expected actions, risk, and cost for the next deploy run",
     )
-    async def preview(task_id: Optional[str] = None) -> DeployPreviewResponse:
+    async def preview(
+        task_id: Optional[str] = None,
+        user=Depends(auth_dependency),  # type: ignore[valid-type]
+    ) -> DeployPreviewResponse:
         try:
             payload = await deploy_service.get_preview(task_id=task_id)
         except RuntimeError as exc:
@@ -118,7 +125,11 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         status_code=status.HTTP_202_ACCEPTED,
         summary="Rollback to the previous successful deployment commit.",
     )
-    async def rollback(payload: RollbackRequest, background_tasks: BackgroundTasks) -> DeployResponse:
+    async def rollback(
+        payload: RollbackRequest,
+        background_tasks: BackgroundTasks,
+        user=Depends(auth_dependency),  # type: ignore[valid-type]
+    ) -> DeployResponse:
         try:
             task, target_commit, current_commit, branch_value = await deploy_service.prepare_rollback(
                 payload.branch
@@ -159,7 +170,10 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         response_model=list[DeployTaskSummary],
         summary="List recent deploy/rollback tasks.",
     )
-    async def list_recent_tasks(limit: int = 5) -> list[DeployTaskSummary]:
+    async def list_recent_tasks(
+        limit: int = 5,
+        user=Depends(auth_dependency),  # type: ignore[valid-type]
+    ) -> list[DeployTaskSummary]:
         bounded_limit = max(1, min(limit, 20))
         summaries = await deploy_service.list_recent_tasks(limit=bounded_limit)
         return [DeployTaskSummary.model_validate(summary) for summary in summaries]
@@ -169,7 +183,10 @@ def build_deploy_router(deploy_service: DeployService) -> APIRouter:
         response_model=DeployTaskLogResponse,
         summary="Return stdout/stderr metadata for a specific task.",
     )
-    async def task_logs(task_id: str) -> DeployTaskLogResponse:
+    async def task_logs(
+        task_id: str,
+        user=Depends(auth_dependency),  # type: ignore[valid-type]
+    ) -> DeployTaskLogResponse:
         try:
             payload = await deploy_service.get_task_logs(task_id)
         except RuntimeError as exc:

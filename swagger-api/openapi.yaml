@@ -42,6 +42,7 @@ paths:
   /api/v1/deploy:
     post:
       summary: Trigger a chatbot frontend deployment
+      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
       tags: [deploy]
       requestBody:
         required: true
@@ -73,6 +74,7 @@ paths:
   /api/v1/status/{task_id}:
     get:
       summary: Fetch current deployment status
+      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
       tags: [deploy]
       parameters:
         - in: path
@@ -97,8 +99,9 @@ paths:
     get:
       summary: Describe upcoming deploy steps, risks, and costs
       description: >
-        Returns risk/cost estimates, warnings, and timeline data using diff statistics from the local
-        working tree or (when configured) the GitHub Compare API with a short-lived cache/fallback.
+        Requires a valid auth_token cookie. Returns risk/cost estimates, warnings, and timeline data using diff
+        statistics from the local working tree or (when configured) the GitHub Compare API with a short-lived
+        cache/fallback.
       tags: [deploy]
       parameters:
         - in: query
@@ -122,6 +125,7 @@ paths:
   /api/v1/rollback:
     post:
       summary: Roll back to the previous successful deployment commit
+      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
       tags: [deploy]
       requestBody:
         required: true
@@ -151,6 +155,7 @@ paths:
   /api/v1/tasks/recent:
     get:
       summary: List recent deploy/rollback tasks
+      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
       tags: [deploy]
       parameters:
         - in: query
@@ -173,6 +178,7 @@ paths:
   /api/v1/tasks/{task_id}/logs:
     get:
       summary: Detailed stdout/stderr metadata for a specific task
+      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
       tags: [deploy]
       parameters:
         - in: path
@@ -189,6 +195,57 @@ paths:
                 $ref: '#/components/schemas/DeployTaskLogResponse'
         '404':
           description: Task not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/auth/login:
+    post:
+      summary: Authenticate operator and set auth cookie
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Credentials accepted; cookie issued via Set-Cookie header.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/auth/logout:
+    post:
+      summary: Clear auth cookie
+      tags: [auth]
+      responses:
+        '200':
+          description: Cookie removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+  /api/v1/auth/me:
+    get:
+      summary: Return current authenticated user
+      tags: [auth]
+      responses:
+        '200':
+          description: Cookie decoded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Missing or invalid auth cookie.
           content:
             application/json:
               schema:
@@ -264,6 +321,40 @@ components:
         dev_server_restart_planned:
           type: boolean
           description: True when the pipeline restarts the long-running dev server instead of copying static assets.
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: Operator username configured via LOGIN_USER.
+        password:
+          type: string
+          description: Operator password configured via LOGIN_PASSWORD.
+    LoginResponse:
+      type: object
+      required: [username, expires_at]
+      properties:
+        username:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          description: Expiration timestamp for the issued JWT cookie.
+    LogoutResponse:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          description: True when the cookie is cleared.
+    MeResponse:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          description: Authenticated username derived from the auth cookie.
     DeployStatusResponse:
       type: object
       required: [task_id, status, metadata, stages, started_at]

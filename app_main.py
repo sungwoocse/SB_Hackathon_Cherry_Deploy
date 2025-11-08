@@ -16,11 +16,12 @@ if str(API_CODE_PATH) not in sys.path:
 from env_loader import load_local_env  # noqa: E402
 from repositories import DeployTaskRepository, InMemoryDeployTaskRepository  # noqa: E402
 from routers import (  # noqa: E402
+    build_auth_router,
     build_chat_router,
     build_deploy_router,
     build_health_router,
 )
-from services import DeployService, GeminiChatService  # noqa: E402
+from services import AuthService, DeployService, GeminiChatService  # noqa: E402
 from settings import get_settings  # noqa: E402
 
 
@@ -47,9 +48,12 @@ app.add_middleware(
 chat_service = GeminiChatService(api_key=settings.gemini_api_key)
 deploy_repository: DeployTaskRepository | InMemoryDeployTaskRepository = DeployTaskRepository()
 deploy_service = DeployService(deploy_repository, settings)
+auth_service = AuthService(settings)
+auth_dependency = auth_service.build_auth_dependency()
 
 app.include_router(build_chat_router(chat_service))
-app.include_router(build_deploy_router(deploy_service))
+app.include_router(build_auth_router(auth_service))
+app.include_router(build_deploy_router(deploy_service, auth_dependency))
 app.include_router(build_health_router(deploy_service))
 
 
