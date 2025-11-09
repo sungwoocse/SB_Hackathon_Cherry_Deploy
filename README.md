@@ -46,26 +46,6 @@
 - Deploy API에서 Repo1까지 Git 작업을 직접 수행하므로 두 레포를 같은 서버에 둡니다.
 - 기본 브랜치 `deploy`, 필요 시 `main` 만 허용. (기타 브랜치는 API에서 거부)
 
-### 2. 런타임 아키텍처
-```mermaid
-graph LR
-    Operator -->|Auth cookie| FastAPI
-    FastAPI --> DeployRouter
-    DeployRouter --> DeployService
-    DeployService -->|async| MongoDB[(deploy_tasks)]
-    DeployService --> GitRepo1
-    DeployService -->|npm/pm2| PM2[main-api, frontend-dev]
-    DeployService -->|symlink flip| Nginx[/Nginx blue-green slots/]
-    DeployService --> Gemini
-    FastAPI -->|/healthz| PM2Status
-    FastAPI -->|/api/v1/chat| GeminiChat
-```
-- `app_main.py` 에서 `.env` 로드 → Settings → Services/Repositories → Router 등록
-- Mongo 연결 실패 시 자동으로 `InMemoryDeployTaskRepository` 로 폴백 (app startup 이벤트)
-- 모든 `/api/v1/*`(chat 제외)에 JWT 쿠키 기반 인증 적용
-
----
-
 ## 🗂️ 디렉터리 안내
 
 | 경로 | 설명 |
@@ -195,6 +175,7 @@ pip install -r requirements.txt
 ```
 
 ### 4. 환경변수 (.env) 생성
+> ⚠️ 실서버 키/비밀번호는 절대 Git에 올리지 마세요. 아래 값들은 모두 예시/플레이스홀더입니다.
 `.env` 파일은 직접 작성해야 합니다 (예시):
 ```
 GEMINI_API_KEY=<필요 시 입력>
