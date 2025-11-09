@@ -55,7 +55,7 @@ graph LR
     DeployService -->|async| MongoDB[(deploy_tasks)]
     DeployService --> GitRepo1
     DeployService -->|npm/pm2| PM2[main-api, frontend-dev]
-    DeployService -->|symlink flip| Nginx[/var/www/cherry-deploy/blue_or_green]
+    DeployService -->|symlink flip| Nginx[/Nginx blue-green slots/]
     DeployService --> Gemini
     FastAPI -->|/healthz| PM2Status
     FastAPI -->|/api/v1/chat| GeminiChat
