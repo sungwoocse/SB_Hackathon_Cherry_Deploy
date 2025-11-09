@@ -259,7 +259,7 @@ npm install
 
 ## 🔐 보안 체크리스트
 - **비밀 관리**: `.env`는 Git에서 제외되어 있으며(`.gitignore`), README에도 플레이스홀더만 표기됩니다. 모든 키/비밀번호는 환경변수로만 주입합니다.
-- **JWT 쿠키 방어**: `AuthService`가 발급하는 `auth_token`은 HTTPOnly, Secure(기본 true), SameSite=Lax, 만료 시간(기본 60분)을 강제합니다. `JWT_SECRET_KEY`가 `change-me`면 서버가 기동을 거부합니다.
+- **JWT 쿠키 방어**: `AuthService`가 발급하는 `auth_token`은 HTTPOnly, Secure(기본 true), SameSite=Lax 속성을 사용합니다. `JWT_SECRET_KEY`가 `change-me`면 서버가 기동을 거부합니다.
 - **엔드포인트 보호**: `/api/v1/chat`과 `/healthz`를 제외한 모든 DevOps·프리뷰·로그 엔드포인트는 JWT 쿠키가 없으면 401을 반환합니다.
 - **브랜치 화이트리스트**: `DEPLOY_ALLOWED_BRANCHES`(기본 `deploy,main`) 외 브랜치는 서버에서 거부되어 임의 배포를 차단합니다.
 - **동시성 제어**: `AsyncReentrantLock`으로 단일 배포만 허용해 레이스 컨디션·충돌 커밋을 예방합니다.
