@@ -1,0 +1,85 @@
+openapi: 3.0.3
+info:
+  title: Cherry Deploy Chat API
+  summary: Gemini 2.5 Flash 프록시 엔드포인트
+  description: |
+    Cherry Deploy 대시보드가 사용하는 경량 챗봇 API입니다. 요청은 FastAPI → Google Gemini 2.5 Flash 순으로
+    전달되며, API 키가 없거나 오류가 발생하면 친절한 fallback 문구를 반환합니다.
+  version: 1.0.0
+servers:
+  - url: https://delight.13-125-116-92.nip.io
+    description: Production 엔드포인트 (Let's Encrypt TLS)
+  - url: http://127.0.0.1:9001
+    description: 로컬 FastAPI (Nginx 우회)
+paths:
+  /api/v1/chat:
+    post:
+      operationId: createChatCompletion
+      summary: Gemini에게 메시지를 전달하고 응답을 반환합니다.
+      tags:
+        - chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            examples:
+              greeting:
+                summary: 기본 인사 예시
+                value:
+                  message: "안녕하세요! 현재 배포 상태 알려줘"
+      responses:
+        "200":
+          description: Gemini 응답 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                success:
+                  summary: 정상 응답
+                  value:
+                    reply: "안녕하세요! 현재 파이프라인은 Green 슬롯에서 안정적으로 동작 중입니다."
+                    model: "gemini-2.5-flash"
+        "400":
+          description: 잘못된 요청 (빈 message 등)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Gemini 호출 실패 또는 기타 서버 오류 (fallback 사용)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          minLength: 1
+          description: 사용자 입력. 1자 이상이어야 합니다.
+    ChatResponse:
+      type: object
+      required:
+        - reply
+        - model
+      properties:
+        reply:
+          type: string
+          description: Gemini 또는 fallback 응답 전문.
+        model:
+          type: string
+          description: 사용된 백엔드 모델명 (기본값: gemini-2.5-flash).
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string

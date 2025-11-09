@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+
+class Settings(BaseModel):
+    """Runtime configuration resolved from environment variables."""
+
+    gemini_api_key: Optional[str] = Field(
+        default=None, alias="GEMINI_API_KEY", description="Google Gemini API key"
+    )
+    mongodb_uri: str = Field(
+        default="mongodb://127.0.0.1:27017",
+        alias="MONGODB_URI",
+        description="MongoDB connection string",
+    )
+    mongodb_db_name: str = Field(
+        default="cherry_deploy",
+        alias="MONGODB_DB_NAME",
+        description="MongoDB database name",
+    )
+    chatbot_repo_path: str = Field(
+        default="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot",
+        alias="CHATBOT_REPO_PATH",
+        description="Path to the frontend repository checked out on EC2.",
+    )
+    nginx_green_path: str = Field(
+        default="/var/www/cherry-deploy/green",
+        alias="NGINX_GREEN_PATH",
+        description="Filesystem path for the Green deployment directory.",
+    )
+    nginx_blue_path: str = Field(
+        default="/var/www/cherry-deploy/blue",
+        alias="NGINX_BLUE_PATH",
+        description="Filesystem path for the Blue deployment directory.",
+    )
+    nginx_live_symlink: str = Field(
+        default="/var/www/cherry-deploy/current",
+        alias="NGINX_LIVE_SYMLINK",
+        description="Symlink that Nginx uses as its document root.",
+    )
+    deploy_dry_run: bool = Field(
+        default=False,
+        alias="DEPLOY_DRY_RUN",
+        description="When true, deployment commands are logged but not executed.",
+    )
+    deploy_default_branch: str = Field(
+        default="deploy",
+        alias="DEPLOY_DEFAULT_BRANCH",
+        description="Primary branch in Repo1 to pull for deployments.",
+    )
+    deploy_allowed_branches: str = Field(
+        default="deploy,main",
+        alias="DEPLOY_ALLOWED_BRANCHES",
+        description="Comma-separated list of branches permitted for deploy operations.",
+    )
+    frontend_project_subdir: str = Field(
+        default="frontend/my-dashboard",
+        alias="FRONTEND_PROJECT_SUBDIR",
+        description="Relative path to the frontend project within the chatbot repository.",
+    )
+    frontend_install_command: str = Field(
+        default="npm install",
+        alias="FRONTEND_INSTALL_COMMAND",
+        description="Command used to install frontend dependencies.",
+    )
+    frontend_build_command: str = Field(
+        default='bash -lc "npm run build"',
+        alias="FRONTEND_BUILD_COMMAND",
+        description="Command used to build the frontend application.",
+    )
+    frontend_export_command: Optional[str] = Field(
+        default="npm run export",
+        alias="FRONTEND_EXPORT_COMMAND",
+        description=(
+            "Optional command to generate static export artifacts after build. "
+            "Set to blank to skip."
+        ),
+    )
+    frontend_build_output_subdir: str = Field(
+        default="out",
+        alias="FRONTEND_BUILD_OUTPUT_SUBDIR",
+        description=(
+            "Relative path to the directory containing deployable frontend assets "
+            "after build/export."
+        ),
+    )
+    preview_llm_model: str = Field(
+        default="gemini-2.5-flash",
+        alias="PREVIEW_LLM_MODEL",
+        description="Generative model used to summarize upcoming deploy diffs.",
+    )
+    login_user: str = Field(
+        default="cherry",
+        alias="LOGIN_USER",
+        description="Static operator username accepted by the API login endpoint.",
+    )
+    login_password: str = Field(
+        default="coffee",
+        alias="LOGIN_PASSWORD",
+        description="Static operator password accepted by the API login endpoint.",
+    )
+    jwt_secret_key: str = Field(
+        default="change-me",
+        alias="JWT_SECRET_KEY",
+        description="Secret key used to sign authentication JWT cookies.",
+    )
+    jwt_expire_minutes: int = Field(
+        default=60,
+        alias="JWT_EXPIRE_MINUTES",
+        description="Validity window (minutes) for authentication cookies.",
+    )
+    auth_cookie_name: str = Field(
+        default="auth_token",
+        alias="AUTH_COOKIE_NAME",
+        description="Cookie key that stores the signed authentication token.",
+    )
+    auth_cookie_secure: bool = Field(
+        default=True,
+        alias="AUTH_COOKIE_SECURE",
+        description="Whether to set the Secure flag on the auth cookie.",
+    )
+    auth_cookie_domain: Optional[str] = Field(
+        default=None,
+        alias="AUTH_COOKIE_DOMAIN",
+        description="Optional cookie domain override for the auth cookie.",
+    )
+    preview_use_github_compare: bool = Field(
+        default=False,
+        alias="PREVIEW_USE_GITHUB_COMPARE",
+        description="When true, preview diffs are sourced from the GitHub Compare API when available.",
+    )
+    github_compare_repo: Optional[str] = Field(
+        default=None,
+        alias="GITHUB_COMPARE_REPO",
+        description="owner/repo slug used for the GitHub Compare API (e.g., org/project).",
+    )
+    github_compare_head_ref: Optional[str] = Field(
+        default=None,
+        alias="GITHUB_COMPARE_HEAD_REF",
+        description="Optional ref (branch/sha) passed as the head parameter. Defaults to current HEAD.",
+    )
+    github_compare_token: Optional[str] = Field(
+        default=None,
+        alias="GITHUB_COMPARE_TOKEN",
+        description="Read-only GitHub token used for compare API requests.",
+    )
+    github_compare_cache_seconds: int = Field(
+        default=60,
+        alias="GITHUB_COMPARE_CACHE_SECONDS",
+        description="TTL for cached GitHub Compare responses (seconds).",
+    )
+    preview_diff_command: str = Field(
+        default="git diff --name-status {base_commit}..HEAD",
+        alias="PREVIEW_DIFF_COMMAND",
+        description="Command template to summarize upcoming changes for LLM preview.",
+    )
+    preview_diff_max_chars: int = Field(
+        default=4000,
+        alias="PREVIEW_DIFF_MAX_CHARS",
+        description="Maximum number of diff characters supplied to the preview LLM.",
+    )
+    display_timezone: str = Field(
+        default="Asia/Seoul",
+        alias="DISPLAY_TIMEZONE",
+        description="IANA timezone name used when presenting timestamps to API consumers.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        return cls.model_validate(os.environ)
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return a cached Settings instance built from environment variables."""
+    return Settings.from_env()
