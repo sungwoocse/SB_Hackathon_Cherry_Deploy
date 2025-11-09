@@ -1,120 +1,130 @@
-<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: auto; background-color: #ffffff; color: #333;">
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 24px; max-width: 960px; margin: auto; background-color: #ffffff; color: #222;">
+  <h1 style="font-size: 30px; border-bottom: 2px solid #111; padding-bottom: 12px; margin-top: 0;">
+    🚀 SoftBank Hackathon 2025 · Team Cherry<br>
+    <small style="font-size: 0.6em; color: #666;">“Delightful Deploy” 개발 전략서 (최종본)</small>
+  </h1>
 
-    <h1 style="border-bottom: 2px solid #000; padding-bottom: 10px; font-size: 28px;">
-        🚀 SoftBank Hackathon: "Delightful Deploy" Cherry팀 전략
-    </h1>
+  <h2 style="font-size: 24px; margin-top: 32px;">1. 문제 정의 & 인사이트</h2>
+  <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+    <div style="flex: 1 1 280px; background:#f8f8f8; padding:16px; border-radius:8px;">
+      <h3 style="margin-top:0;">개발자 Pain</h3>
+      <ul style="margin:0 0 0 20px;">
+        <li>롤백 속도가 느려 신뢰가 떨어짐</li>
+        <li>배포 로그가 여러 서버에 흩어져 파악이 어려움</li>
+        <li>동시 배포 시 레이스 컨디션으로 환경이 꼬임</li>
+        <li>배포마다 “불안”이 동반되어 심리적 비용 증가</li>
+      </ul>
+    </div>
+    <div style="flex: 1 1 280px; background:#f8f8f8; padding:16px; border-radius:8px;">
+      <h3 style="margin-top:0;">사용자 Pain</h3>
+      <ul style="margin:0 0 0 20px;">
+        <li>배포 순간의 지연/에러/버전 섞임 체감</li>
+        <li>새 기능이 느리게 제공되거나, 공지가 부족</li>
+        <li>서비스 안정성에 대한 신뢰 하락</li>
+      </ul>
+    </div>
+  </div>
 
-    <h2 style="font-size: 24px; margin-top: 30px;">1. 배경 연구: 배포의 "고통" (Pain Points)</h2>
-    <p style="font-size: 16px; color: #555;">(회의 주제였던 "개발자와 소비자가 겪는 배포 문제" 리서치입니다. 이 문제를 해결하는 것이 우리 해커톤의 목표입니다.)</p>
+  <h2 style="font-size: 24px; margin-top: 32px;">2. 해결 전략: “배포를 놀이기구처럼”</h2>
+  <p style="color:#555; margin-bottom:8px;">배포를 테마파크 놀이기구에 비유하여, <strong>빠르고(Fast) · 안전하고(Safe) · 관측 가능하고(Observable) · 협업 친화적(Collaborative) · 재미있는(Delightful)</strong> 경험을 설계했습니다.</p>
+  <table style="width:100%; border-collapse:collapse; margin-top:16px;">
+    <thead>
+      <tr style="background:#fafafa;">
+        <th style="border:1px solid #ddd; padding:8px;">놀이기구 요소</th>
+        <th style="border:1px solid #ddd; padding:8px;">Cherry Deploy 구현</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">줄이 짧다 (대기시간 ↓)</td>
+        <td style="border:1px solid #ddd; padding:8px;">버튼 한 번 / API 한 번으로 Git → npm build → 컷오버 자동화</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">안전바 단단</td>
+        <td style="border:1px solid #ddd; padding:8px;">실패 시 즉시 자동 롤백 + 최근 성공 커밋 강제 복구</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">사진/성적표</td>
+        <td style="border:1px solid #ddd; padding:8px;">LLM 프리뷰 · 단계별 로그 · `/healthz` 지표 제공</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">친구랑 같이 탄다</td>
+        <td style="border:1px solid #ddd; padding:8px;">AsyncReentrantLock 으로 서버 전역 동시성 제어</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">BGM/연출</td>
+        <td style="border:1px solid #ddd; padding:8px;">Gemini 2.5 Flash가 변경사항을 요약하고 위험/테스트를 추천</td>
+      </tr>
+    </tbody>
+  </table>
 
-    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(A) "AWS 개발자"가 겪는 고통 (엔지니어 시점)</h3>
-    <p style="margin: 0 0 15px 0;">핵심: <strong>fast 하면 unsafe해지고, safe 하려면 느려진다.</strong> "fast AND safe" 둘 다 잡는 장치가 필요합니다.</p>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>롤백이 느리고 복잡:</strong> 새 버전이 터졌을 때 즉시 원복이 어렵습니다.</li>
-        <li><strong>실패 원인 파악이 어려움:</strong> 로그가 여러 서비스에 흩어져 추적이 어렵습니다.</li>
-        <li><strong>동시 배포 충돌:</strong> 여러 명이 동시에 배포하면 환경이 꼬입니다 (Race Condition).</li>
-        <li><strong>Secret 관리의 위험:</strong> <code>.env</code> 파일이나 키 관리가 실수하기 쉽습니다.</li>
-        <li><strong>환경 차이로 인한 오류:</strong> 로컬/Staging/Prod 환경이 달라 예측 불가능한 버그가 생깁니다.</li>
-        <li><strong>배포에 대한 공포:</strong> 작은 변경이라도 "릴리스 = 고통/불안"으로 인식됩니다.</li>
-    </ul>
+  <h2 style="font-size: 24px; margin-top: 32px;">3. 제품 범위 (최종)</h2>
+  <ul>
+    <li><strong>백엔드</strong>: FastAPI, Motor(MongoDB), PM2, Nginx, asyncio, Google Gemini.</li>
+    <li><strong>리포지토리 전략</strong>: Repo1(Next.js 타겟) + Repo2(Deploy 백엔드) 분리.</li>
+    <li><strong>파이프라인</strong>: <code>running_clone → running_build → running_cutover → running_observability</code> 4단계.</li>
+    <li><strong>자동화</strong>: LLM 프리뷰, 비용/ETA 추정, auto rollback, stage 로그.</li>
+    <li><strong>API</strong>: 챗봇 1개 + DevOps 7개 + Auth 3개 + Health 1개 = 총 12개.</li>
+  </ul>
 
-    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(B) "일반 소비자"가 느끼는 불편 (소비자 시점)</h3>
-    <p style="margin: 0 0 15px 0;">핵심: <strong>사람은 "버전 전환"을 느끼면 불편합니다.</strong> 배포는 "아무 일도 없었던 것처럼" 뒤에서 바뀌어야 합니다.</p>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>순간적인 속도 저하:</strong> 배포 타이밍에 앱이 느려집니다.</li>
-        <li><strong>순간적인 에러 발생:</strong> 롤링 배포 중간에 에러 페이지가 노출됩니다.</li>
-        <li><strong>기능/버전 섞임:</strong> 캐시나 지역별 배포 차이로 버전이 섞여 보입니다.</li>
-        <li><strong>새 기능 업데이트 지연:</strong> 릴리스가 제때 안 되거나 장애 공지가 없습니다.</li>
-    </ul>
+  <h2 style="font-size: 24px; margin-top: 32px;">4. 주요 기능 목표 vs 현실</h2>
+  <table style="width:100%; border-collapse:collapse; margin-top:12px;">
+    <thead>
+      <tr style="background:#fafafa;">
+        <th style="border:1px solid #ddd; padding:8px;">카테고리</th>
+        <th style="border:1px solid #ddd; padding:8px;">목표</th>
+        <th style="border:1px solid #ddd; padding:8px;">최종 구현</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">배포 자동화</td>
+        <td style="border:1px solid #ddd; padding:8px;">Git + npm + Blue/Green 전 과정을 자동화</td>
+        <td style="border:1px solid #ddd; padding:8px;">`DeployService` 1586줄 파이프라인 완성, dry-run 지원</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">관측성</td>
+        <td style="border:1px solid #ddd; padding:8px;">Stage 로그 · 비용/위험/LLM 요약</td>
+        <td style="border:1px solid #ddd; padding:8px;">`/status`, `/tasks/logs`, `/preview`, `/healthz` 전부 작동</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">안전성</td>
+        <td style="border:1px solid #ddd; padding:8px;">동시성 제어 & 자동 롤백 & 인증</td>
+        <td style="border:1px solid #ddd; padding:8px;">AsyncReentrantLock, auto rollback, JWT cookie 인증 제공</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">AI 활용</td>
+        <td style="border:1px solid #ddd; padding:8px;">LLM이 변경사항을 요약하고 경고</td>
+        <td style="border:1px solid #ddd; padding:8px;">Gemini 2.5 Flash 연동, fallback 포함</td>
+      </tr>
+    </tbody>
+  </table>
 
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+  <h2 style="font-size: 24px; margin-top: 32px;">5. 타임라인 & 마일스톤</h2>
+  <ol style="margin-left:20px;">
+    <li><strong>Day 1</strong>: 문제/해결 정의, Repo 구조 설계, Mongo/PM2 베이스 구축</li>
+    <li><strong>Day 2</strong>: DeployService 파이프라인 · Stage 메타데이터 · Dry-run 구현</li>
+    <li><strong>Day 3</strong>: LLM 프리뷰, Preview API, Status/Logs API, Auth/JWT</li>
+    <li><strong>Day 4</strong>: Auto rollback, `/healthz`, Swagger 문서, 테스트 강화</li>
+    <li><strong>Day 5</strong>: README/Plan 최종 정리, Demo 시나리오, nip.io + TLS 검증</li>
+  </ol>
 
-    <h2 style="font-size: 24px; margin-top: 30px;">2. 우리의 정의: "Delightful Deploy"란 무엇인가?</h2>
-    <p style="font-size: 16px; font-style: italic; color: #555;">(이 정의는 위 1번의 문제들을 해결하며, 심사기준 4가지: 클라우드 활용/완성도/재미/팀개발을 모두 충족합니다.)</p>
+  <h2 style="font-size: 24px; margin-top: 32px;">6. 성공 지표</h2>
+  <ul>
+    <li>배포 1회 평균 8분 이내 (diff 기반 ETA)</li>
+    <li>오류 발생 시 자동 롤백 성공률 ≥ 90%</li>
+    <li>LLM 프리뷰 요약/경고가 모든 배포 로그에 첨부</li>
+    <li>Swagger/OpenAPI + README + Plan 만으로 신규 인원이 30분 내 온보딩</li>
+  </ul>
 
-    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(A) 비유: 배포는 테마파크 놀이기구다.</h3>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>줄이 짧다 (대기시간↓):</strong> 클릭 한 번에 빠르게 탑승(배포).</li>
-        <li><strong>안전바 단단 (안전장치↑):</strong> 문제 생겨도 즉시 원위치(롤백).</li>
-        <li><strong>사진/성적표 제공 (관측↑):</strong> 전/후 성능·리소스 차이를 눈으로 확인.</li>
-        <li><strong>친구랑 같이 탄다 (동시성↑):</strong> 여러 명이 동시에 안전하게 탑승(팀 협업/충돌 방지).</li>
-        <li><strong>BGM/연출 (재미↑):</strong> "또 타고 싶다"는 감정이 남는다.</li>
-    </ul>
+  <h2 style="font-size: 24px; margin-top: 32px;">7. 데모 플로우</h2>
+  <ol style="margin-left:20px;">
+    <li>`/api/v1/preview` 호출 → LLM 요약/ETA 확인</li>
+    <li>`/api/v1/deploy` 실행 → stage 로그 & `/healthz` 관찰</li>
+    <li>실패 시나리오 트리거 → 자동 롤백 결과 확인</li>
+    <li>`/api/v1/tasks/recent`, `/tasks/{id}/logs`로 히스토리 검증</li>
+    <li>필요 시 `/api/v1/rollback` 호출로 즉시 복구</li>
+  </ol>
 
-    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(B) 실제 구현 (수정 완료)</h3>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code>를 호출</li>
-        <li><strong>자동 흐름:</strong> FastAPI 백엔드가 <code>git fetch → checkout/reset → clean → npm install → npm run build → npm run export</code> 순으로 Next.js 정적 산출물(<code>out/</code>)을 만든 뒤, Nginx Blue/Green 심볼릭 링크를 스왑</li>
-        <li><strong>안전장치:</strong> 실패 시 직전 성공 커밋 대상으로 자동 롤백 시도, SSH 키와 환경 변수는 EC2에만 저장</li>
-        <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 Gemini 2.5 Flash로 요약해 변경 사항과 리스크를 공유</li>
-        <li><strong>동시성:</strong> 서버 레벨 락으로 배포를 직렬화해 충돌을 방지</li>
-    </ul>
-
-    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">(C) 1줄 핵심</h3>
-    <p style="font-size: 18px; font-weight: 500; background-color: #f4f4f4; padding: 15px; border-radius: 8px;">
-        <strong>Delightful Deploy = 버튼 1번으로 빠르고 안전하며 보이는 변화가 있고, 여럿이 써도 안 부서지며, 심지어 재미까지 있는 배포 경험.</strong>
-    </p>
-
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
-
-    <h2 style="font-size: 24px; margin-top: 30px;">3. 실행 계획: 기술 스택 및 흐름</h2>
-    <p style="font-size: 18px; font-weight: 500; background-color: #f4f4f4; padding: 15px; border-radius: 8px;">
-        <strong>"Cherry Deploy API로 Git/빌드를 오케스트레이션하고, PM2가 FastAPI를 지키며 Nginx Blue/Green을 스왑"</strong>
-    </p>
-
-    <h3 style="font-size: 22px; margin-top: 30px;">🛠️ 핵심 기술 스택</h3>
-    <ul>
-        <li><strong>지휘 (Orchestration):</strong> Cherry Deploy FastAPI 백엔드</li>
-        <li><strong>인프라 (Infra):</strong> AWS EC2 (SSH 기반 관리)</li>
-        <li><strong>트래픽 제어 (Gateway):</strong> Nginx (리버스 프록시, Blue/Green 전환용)</li>
-        <li><strong>프로세스 관리 (Runner):</strong> PM2 (`main-api` FastAPI 프로세스 관리 + 필요 시 `frontend-dev` 백업)</li>
-        <li><strong>변경 요약 (Preview):</strong> Gemini 2.5 Flash를 이용한 git diff 요약</li>
-        <li><strong>정적 컷오버:</strong> Next.js 앱(<code>frontend/my-dashboard</code>)을 <code>npm run build</code> & <code>npm run export</code>로 <code>out/</code> 디렉터리에 내보내고 Blue/Green 슬롯에 복제.</li>
-        <li><strong>프론트엔드 타겟:</strong> Next.js 앱 (경로: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run build</code>, <code>npm run export</code> 실행이 가능.</li>
-    </ul>
-
-    <h3 style="font-size: 22px; margin-top: 30px;">🌊 배포 파이프라인 흐름</h3>
-    <ol>
-        <li><strong>트리거:</strong> 운영자가 Cherry Deploy API의 <code>/api/v1/deploy</code> 엔드포인트를 호출한다.</li>
-        <li><strong>저장소 동기화:</strong> 서버 측에서 <code>git fetch → checkout/reset → clean</code> 순으로 Repo1 워킹 디렉터리를 최신화한다.</li>
-        <li><strong>빌드/내보내기:</strong> <code>npm install</code> → <code>npm run build</code> → <code>npm run export</code> 순으로 정적 산출물을 만든다. 이 명령들은 <code>FRONTEND_*</code> 환경변수로 교체 가능하다.</li>
-        <li><strong>컷오버:</strong> <code>out/</code> 결과물을 현재 라이브 슬롯의 반대편(Blue ↔ Green)에 복사하고, <code>/var/www/cherry-deploy/current</code> 심볼릭 링크를 새 슬롯으로 스왑한다. <code>FRONTEND_BUILD_OUTPUT_SUBDIR</code>를 비우면 dev-server 모드로 전환된다.</li>
-        <li><strong>프리뷰:</strong> Preview API가 최신 성공 배포 대비 git diff를 요약해 팀원에게 공유한다.</li>
-        <li><strong>상태 모니터링:</strong> 클라이언트는 <code>/api/v1/status/{task_id}</code>로 진행 상황과 메타데이터를 폴링한다.</li>
-        <li><strong>자동 롤백:</strong> <code>npm install</code> 단계가 실패하면 즉시 직전 성공 커밋으로 자동 복구를 시도하고, 결과를 <code>failure_context.auto_recovery</code>에 기록한다.</li>
-    </ol>
-
-    <h3 style="font-size: 22px; margin-top: 30px;">🎯 핵심 데모 포인트 (심사위원 대상)</h3>
-    <p>우리는 앱이 아닌, "배포 경험" 3가지를 시연합니다.</p>
-    <ol>
-        <li><strong>Nginx를 이용한 Blue/Green 배포:</strong> 버튼 하나로 트래픽을 즉시 전환/롤백하는 모습.</li>
-        <li><strong>변경 요약 프리뷰:</strong> Preview API가 Gemini 요약으로 변경 위험을 보여주는 모습.</li>
-        <li><strong>자동 롤백:</strong> 헬스 체크 실패 시, 시스템이 자동으로 이전 버전으로 복귀하는 모습.</li>
-    </ol>
-
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
-
-    <h2 style="font-size: 24px; margin-top: 30px;">4. Q&A (주요 기능 설명)</h2>
-
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 배포는 어떻게 시작하나요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: 운영자는 Cherry Deploy 백엔드의 <code>POST /api/v1/deploy</code> 엔드포인트를 호출하거나, 동일한 명령을 래핑한 스크립트를 통해 배포를 시작합니다. GitHub Actions와 같은 외부 오케스트레이터는 사용하지 않습니다.
-    </p>
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 롤백은 어떻게 동작하나요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: <code>POST /api/v1/rollback</code>을 호출하면 최근 성공 배포 두 건을 확인해 최신 commit에서 바로 이전 commit으로 되돌립니다. 내부적으로 <code>git fetch</code>, <code>git checkout -B ... to_commit</code>, <code>git reset --hard</code>, <code>git clean -fdx</code>, <code>npm install</code>, <code>npm run build</code>, <code>npm run export</code> 후 Blue/Green 심볼릭 링크까지 동일하게 재적용합니다. 실제 모드에서는 <code>git push origin +to_commit:branch</code>로 원격도 강제로 되돌립니다. (TIP: Repo1 <code>deploy</code> 브랜치에는 <code>frontend/my-dashboard</code>만 올려두세요.)</p>
-
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 백엔드 <code>/api/v1/deploy</code> 호출 시 어떤 입력이 필요한가요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: 브랜치를 명시하지 않으면 기본적으로 <code>deploy</code> 브랜치를 사용합니다. 필요하다면 <code>{ "branch": "main" }</code>처럼 허용된 브랜치를 명시적으로 전송할 수도 있습니다. 다른 브랜치는 거부됩니다.
-        작업자 추적은 Git 커밋 작성자 정보로 충분하다고 판단했습니다.
-    </p>
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: 테스트 모드(드라이런)와 실제 배포 모드는 어떻게 전환하나요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: 기본값은 실제 명령 실행(<code>DEPLOY_DRY_RUN=false</code>)입니다. 시뮬레이션만 원하면 PM2를 재시작하기 전에 환경변수 <code>DEPLOY_DRY_RUN=true</code>를 설정하세요. MongoDB는 프로젝트 루트의 <code>./mongodb</code>, 데이터는 <code>./mongodb-data</code>에 위치합니다. 실제 배포 모드에서는 <code>git fetch → git checkout -B ... → git reset --hard → git clean -fdx → npm install → npm run build → npm run export</code> 순으로 Repo1 워킹 디렉터리를 교체한 뒤 Blue/Green 심볼릭 링크를 스왑합니다.</p>
-    <h4 style="font-size: 18px; margin-bottom: 5px; margin-top: 20px;">Q: Preview API는 어떤 정보를 주나요?</h4>
-    <p style="margin: 0 0 15px 0;">
-        A: 최신 성공 배포 대비 Git diff를 수집해 Gemini 2.5 Flash 모델로 요약한 변경 사항, 위험 요소, 테스트 권장 사항을 제공합니다. `GEMINI_API_KEY`가 설정돼 있어야 하며 모델은 `PREVIEW_LLM_MODEL`로 변경할 수 있습니다.
-    </p>
-
+  <p style="margin-top:40px; font-weight:bold; text-align:center;">“배포를 또 하고 싶어지는 경험”이 곧 Cherry Deploy의 핵심 가치입니다.</p>
 </div>

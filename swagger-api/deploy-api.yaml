@@ -1,25 +1,30 @@
 openapi: 3.0.3
 info:
-  title: Cherry Deploy DevOps API
-  version: 0.1.0
+  title: Cherry Deploy · Deployment & Rollback API
+  version: 1.0.0
   description: |
-    Trigger Blue/Green deployments for the chatbot frontend. The pipeline stages clone the Repo1 `deploy`
-    branch, build static assets, swap Nginx symlinks, and record observability placeholders.
-    NOTE: This API relies on MongoDB and long-running background tasks; the live FastAPI instance must be
-    running to exercise it. The static YAML here is for documentation only and cannot execute the pipeline by itself.
-    ⚠️ 전체 API 스펙은 `swagger-api/openapi.yaml`을 사용하세요. 이 파일은 참고용 조각 문서입니다.
+    Next.js 대상(Repo1)을 Blue/Green 방식으로 배포하거나 직전 성공 커밋으로 롤백합니다.
+    모든 엔드포인트는 JWT 쿠키(`auth_token`) 인증이 필요하며, FastAPI BackgroundTask로 실행됩니다.
 servers:
   - url: https://delight.13-125-116-92.nip.io
-    description: Production-like endpoint (HTTPS via Let's Encrypt)
+    description: Production (TLS + Nginx)
   - url: http://127.0.0.1:9001
-    description: Local FastAPI server (bypasses Nginx)
+    description: 로컬 FastAPI
+components:
+  securitySchemes:
+    AuthCookie:
+      type: apiKey
+      in: cookie
+      name: auth_token
+      description: `/api/v1/auth/login` 에서 발급되는 JWT 쿠키
 paths:
   /api/v1/deploy:
     post:
-      summary: Trigger a chatbot frontend deployment
-      operationId: triggerDeploy
+      summary: Next.js 프론트엔드 배포 트리거
       tags:
         - deploy
+      security:
+        - AuthCookie: []
       requestBody:
         required: true
         content:
@@ -28,29 +33,63 @@ paths:
               $ref: '#/components/schemas/DeployRequest'
             examples:
               default:
-                summary: Deploy the default branch
                 value:
                   branch: deploy
       responses:
         "202":
-          description: Deployment accepted; background task scheduled.
+          description: 배포 작업이 큐에 등록됨
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeployResponse'
-              examples:
-                accepted:
-                  summary: Immediate response
-                  value:
-                    task_id: "fd2c3a1d8f1f4d59b6d3f6c5d30d2f7a"
-                    status: "pending"
-        "500":
-          description: Unexpected server error prevented task creation.
+        "400":
+          description: 허용되지 않은 브랜치
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-      security: []
+        "500":
+          description: 서버 오류로 작업 생성 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/rollback:
+    post:
+      summary: 직전 성공 배포로 롤백
+      tags:
+        - deploy
+      security:
+        - AuthCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+            examples:
+              default:
+                value:
+                  branch: deploy
+      responses:
+        "202":
+          description: 롤백 작업이 큐에 등록됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+        "400":
+          description: 입력 오류
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: 롤백 가능한 성공 이력이 부족
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     DeployRequest:
@@ -58,72 +97,47 @@ components:
       properties:
         branch:
           type: string
-          minLength: 1
-          description: Optional override for Repo1 branch (defaults to `deploy`).
+          description: 허용된 브랜치(`deploy`, `main`). 생략 시 기본값 사용.
     RollbackRequest:
       type: object
       properties:
         branch:
           type: string
-          minLength: 1
-          description: Optional override for Repo1 branch (defaults to `deploy`).
+          description: 롤백 대상 브랜치 (선택)
     DeployResponse:
       type: object
       required:
         - task_id
         - status
+        - branch
+        - action
+        - queued_at
+        - estimated_duration_minutes
+        - context
+        - dev_server_restart_planned
       properties:
         task_id:
           type: string
-          description: Track this identifier via `/api/v1/status/{task_id}` (to be implemented).
         status:
           type: string
-          enum:
-            - pending
-            - running_clone
-            - running_build
-            - running_cutover
-            - running_observability
-            - completed
-            - failed
-          description: Initial state of the deploy task, always `pending` on creation.
+          enum: [pending, running_clone, running_build, running_cutover, running_observability, completed, failed]
+        branch:
+          type: string
+        action:
+          type: string
+          enum: [deploy, rollback]
+        queued_at:
+          type: string
+          format: date-time
+        estimated_duration_minutes:
+          type: integer
+        context:
+          type: object
+          additionalProperties: true
+        dev_server_restart_planned:
+          type: boolean
     ErrorResponse:
       type: object
-      required:
-        - detail
       properties:
         detail:
           type: string
-          description: Error message for operators.
-  /api/v1/rollback:
-    post:
-      summary: Roll back to the previous successful deployment commit
-      operationId: triggerRollback
-      tags:
-        - deploy
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RollbackRequest'
-      responses:
-        "202":
-          description: Rollback accepted; background task scheduled.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeployResponse'
-        "400":
-          description: Invalid rollback request.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "409":
-          description: Not enough history to perform rollback.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      security: []

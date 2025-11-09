@@ -1,208 +1,51 @@
 openapi: 3.0.3
 info:
   title: Cherry Deploy Backend API
-  version: 0.1.0
+  version: 1.0.0
   description: |
-    Unified specification combining chatbot and DevOps endpoints. Requires the live FastAPI backend for
-    actual execution because several endpoints depend on background tasks, local repositories, and MongoDB.
+    FastAPI 기반 DevOps + 챗봇 백엔드의 전체 스펙입니다. 대부분의 엔드포인트는 로컬 Git 저장소, MongoDB,
+    PM2/Nginx, Google Gemini와 상호작용하므로 실제 서버에서만 유효하게 동작합니다.
 servers:
   - url: https://delight.13-125-116-92.nip.io
-    description: Production-like endpoint (HTTPS via Let's Encrypt)
+    description: Production (TLS via Let's Encrypt)
   - url: http://127.0.0.1:9001
-    description: Local FastAPI server (bypasses Nginx)
+    description: Local FastAPI (bypasses Nginx)
+components:
+  securitySchemes:
+    AuthCookie:
+      type: apiKey
+      in: cookie
+      name: auth_token
+      description: `/api/v1/auth/login` 으로 발급받는 JWT 쿠키
 paths:
   /api/v1/chat:
     post:
-      summary: Send a user message and receive a Gemini-generated reply.
+      summary: Gemini 2.5 Flash 챗봇 호출
       tags: [chat]
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ChatRequest'
-            examples:
-              basic:
-                summary: Basic greeting
-                value:
-                  message: "안녕하세요! 배포 상황이 어떤지 알려주세요."
       responses:
         '200':
-          description: Gemini replied successfully.
+          description: Gemini 응답
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatResponse'
         '400':
-          description: Invalid prompt payload.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/v1/deploy:
-    post:
-      summary: Trigger a chatbot frontend deployment
-      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
-      tags: [deploy]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DeployRequest'
-            example:
-              branch: deploy
-      responses:
-        '202':
-          description: Deployment accepted; background task scheduled.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeployResponse'
-        '400':
-          description: Branch not allowed or payload invalid.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Server error prevented task creation.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/v1/status/{task_id}:
-    get:
-      summary: Fetch current deployment status
-      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
-      tags: [deploy]
-      parameters:
-        - in: path
-          name: task_id
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Task found; returns status and metadata.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeployStatusResponse'
-        '404':
-          description: Task not found.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/v1/preview:
-    get:
-      summary: Describe upcoming deploy steps, risks, and costs
-      description: >
-        Requires a valid auth_token cookie. Returns risk/cost estimates, warnings, and timeline data using diff
-        statistics from the local working tree or (when configured) the GitHub Compare API with a short-lived
-        cache/fallback.
-      tags: [deploy]
-      parameters:
-        - in: query
-          name: task_id
-          schema:
-            type: string
-          description: Optional task identifier to align the preview timeline with a specific run.
-      responses:
-        '200':
-          description: Static preview payload showing operational context.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeployPreviewResponse'
-        '404':
-          description: task_id provided but task metadata missing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/v1/rollback:
-    post:
-      summary: Roll back to the previous successful deployment commit
-      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
-      tags: [deploy]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RollbackRequest'
-      responses:
-        '202':
-          description: Rollback accepted; background task scheduled.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeployResponse'
-        '400':
-          description: Invalid rollback request.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
-          description: Not enough history to perform rollback.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /api/v1/tasks/recent:
-    get:
-      summary: List recent deploy/rollback tasks
-      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
-      tags: [deploy]
-      parameters:
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 20
-            default: 5
-          description: Maximum number of recent tasks to return (clamped to 20).
-      responses:
-        '200':
-          description: Recent tasks ordered by start time (newest first).
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/DeployTaskSummary'
-  /api/v1/tasks/{task_id}/logs:
-    get:
-      summary: Detailed stdout/stderr metadata for a specific task
-      description: Requires a valid auth_token cookie issued by /api/v1/auth/login.
-      tags: [deploy]
-      parameters:
-        - in: path
-          name: task_id
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Task metadata with captured stdout/stderr snippets.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeployTaskLogResponse'
-        '404':
-          description: Task not found.
+          description: 잘못된 요청
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
   /api/v1/auth/login:
     post:
-      summary: Authenticate operator and set auth cookie
       tags: [auth]
+      summary: JWT 쿠키 발급
       requestBody:
         required: true
         content:
@@ -211,52 +54,217 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: Credentials accepted; cookie issued via Set-Cookie header.
+          description: 로그인 성공
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LoginResponse'
         '401':
-          description: Invalid credentials.
+          description: 자격 증명 오류
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
   /api/v1/auth/logout:
     post:
-      summary: Clear auth cookie
       tags: [auth]
+      summary: JWT 쿠키 삭제
       responses:
         '200':
-          description: Cookie removed.
+          description: 로그아웃 성공
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LogoutResponse'
   /api/v1/auth/me:
     get:
-      summary: Return current authenticated user
       tags: [auth]
+      summary: 현재 인증 사용자 확인
+      security:
+        - AuthCookie: []
       responses:
         '200':
-          description: Cookie decoded successfully.
+          description: 사용자 정보
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MeResponse'
         '401':
-          description: Missing or invalid auth cookie.
+          description: 쿠키 없음/만료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/deploy:
+    post:
+      tags: [deploy]
+      summary: Blue/Green 배포 실행
+      description: Repo1 `deploy`(또는 허용된 브랜치)를 최신으로 맞추고 npm build/export 후 Nginx 심볼릭 링크를 스위칭합니다.
+      security:
+        - AuthCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployRequest'
+      responses:
+        '202':
+          description: 작업이 큐에 등록됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+        '400':
+          description: 허용되지 않은 브랜치
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 작업 생성 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/rollback:
+    post:
+      tags: [deploy]
+      summary: 최근 성공 커밋으로 롤백
+      security:
+        - AuthCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '202':
+          description: 롤백 작업이 큐에 등록됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployResponse'
+        '400':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 롤백 가능한 성공 이력 부족
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/status/{task_id}:
+    get:
+      tags: [deploy]
+      summary: 작업 상태 조회
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 작업 상태/메타데이터
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployStatusResponse'
+        '404':
+          description: 작업 미존재
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/preview:
+    get:
+      tags: [deploy]
+      summary: 배포 사전 점검
+      description: 최근 성공 배포와 현재 HEAD diff, LLM 요약, 비용 추정, Blue/Green 상태를 제공합니다.
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: query
+          name: task_id
+          schema:
+            type: string
+          description: 특정 작업 컨텍스트를 참고할 때 지정
+      responses:
+        '200':
+          description: 프리뷰 정보
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployPreviewResponse'
+        '404':
+          description: task_id를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/tasks/recent:
+    get:
+      tags: [deploy]
+      summary: 최근 배포/롤백 목록
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        '200':
+          description: 작업 목록
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeployTaskSummary'
+  /api/v1/tasks/{task_id}/logs:
+    get:
+      tags: [deploy]
+      summary: Stage별 로그/메타데이터 조회
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: stage별 stdout/stderr 포함
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployTaskLogResponse'
+        '404':
+          description: 작업 미존재
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
   /healthz:
     get:
-      summary: Liveness probe
       tags: [system]
+      summary: PM2/Nginx/Mongo 헬스체크
+      security: []
       responses:
         '200':
-          description: Service alive indicator including PM2 and Mongo checks.
+          description: 헬스 상태
           content:
             application/json:
               schema:
@@ -270,7 +278,6 @@ components:
         message:
           type: string
           minLength: 1
-          description: User message forwarded to Gemini 2.5 Flash.
     ChatResponse:
       type: object
       required: [reply, model]
@@ -279,13 +286,47 @@ components:
           type: string
         model:
           type: string
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      required: [username, expires_at]
+      properties:
+        username:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    LogoutResponse:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+    MeResponse:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
     DeployRequest:
       type: object
       properties:
         branch:
           type: string
-          description: "Optional override for the deployment branch (default: deploy)."
-          example: deploy
+          description: 허용된 브랜치(`deploy`, `main`).
+    RollbackRequest:
+      type: object
+      properties:
+        branch:
+          type: string
+          description: 롤백 대상 브랜치 (선택).
     DeployResponse:
       type: object
       required:
@@ -304,7 +345,6 @@ components:
           $ref: '#/components/schemas/DeployStatusEnum'
         branch:
           type: string
-          description: Branch resolved for this deployment or rollback.
         action:
           type: string
           enum: [deploy, rollback]
@@ -313,48 +353,11 @@ components:
           format: date-time
         estimated_duration_minutes:
           type: integer
-          minimum: 1
-          description: Rough ETA derived from diff statistics.
         context:
           type: object
           additionalProperties: true
         dev_server_restart_planned:
           type: boolean
-          description: True when the pipeline restarts the long-running dev server instead of copying static assets.
-    LoginRequest:
-      type: object
-      required: [username, password]
-      properties:
-        username:
-          type: string
-          description: Operator username configured via LOGIN_USER.
-        password:
-          type: string
-          description: Operator password configured via LOGIN_PASSWORD.
-    LoginResponse:
-      type: object
-      required: [username, expires_at]
-      properties:
-        username:
-          type: string
-        expires_at:
-          type: string
-          format: date-time
-          description: Expiration timestamp for the issued JWT cookie.
-    LogoutResponse:
-      type: object
-      required: [success]
-      properties:
-        success:
-          type: boolean
-          description: True when the cookie is cleared.
-    MeResponse:
-      type: object
-      required: [username]
-      properties:
-        username:
-          type: string
-          description: Authenticated username derived from the auth cookie.
     DeployStatusResponse:
       type: object
       required: [task_id, status, metadata, stages, started_at]
@@ -387,12 +390,12 @@ components:
           additionalProperties: true
         cost_estimate:
           type: object
-          additionalProperties: true
           nullable: true
+          additionalProperties: true
         risk_assessment:
           type: object
-          additionalProperties: true
           nullable: true
+          additionalProperties: true
         llm_preview:
           $ref: '#/components/schemas/LLMPreview'
           nullable: true
@@ -401,7 +404,6 @@ components:
           nullable: true
         timezone:
           type: string
-          description: IANA timezone identifier for datetime fields (e.g., Asia/Seoul).
     DeployPreviewResponse:
       type: object
       required:
@@ -410,6 +412,7 @@ components:
         - commands
         - risk_assessment
         - cost_estimate
+        - llm_preview
         - timeline_preview
         - warnings
         - blue_green_plan
@@ -430,15 +433,6 @@ components:
           type: array
           items:
             type: string
-          example:
-            - "git fetch origin"
-            - "git checkout -B deploy origin/deploy"
-            - "git reset --hard origin/deploy"
-            - "git clean -fdx"
-            - "npm install"
-            - "bash -lc \"npm run build\""
-            - "npm run export"
-            - "sync static assets to nginx green path"
         risk_assessment:
           type: object
           additionalProperties: true
@@ -447,86 +441,33 @@ components:
           additionalProperties: true
         llm_preview:
           $ref: '#/components/schemas/LLMPreview'
-          nullable: true
         timeline_preview:
           type: array
           items:
-            $ref: '#/components/schemas/DeployTimelineEntry'
+            $ref: '#/components/schemas/TimelineEntry'
         warnings:
           type: array
           items:
             type: string
         task_context:
-          $ref: '#/components/schemas/DeployTaskSummary'
+          type: object
           nullable: true
+          additionalProperties: true
         blue_green_plan:
           $ref: '#/components/schemas/BlueGreenPlan'
         diff_source:
           type: string
-          description: Indicates whether diff stats come from the local working tree or the GitHub Compare API.
           enum: [working_tree, github_compare]
         diff_stats:
           type: object
           additionalProperties: true
-          description: Aggregated diff summary (file counts, sensitivity flags, derived warnings).
         compare_metadata:
-          type: object
-          nullable: true
-          additionalProperties: true
-          description: Present when diff_source=github_compare and contains ahead/behind counts plus compare URLs.
-    RollbackRequest:
-      type: object
-      properties:
-        branch:
-          type: string
-          description: Optional override for repo1 branch (defaults to deploy).
-          example: deploy
-    DeployStatusEnum:
-      type: string
-      enum:
-        - pending
-        - running_clone
-        - running_build
-        - running_cutover
-        - running_observability
-        - completed
-        - failed
-    ErrorResponse:
-      type: object
-      required: [detail]
-      properties:
-        detail:
-          type: string
-    DeployTimelineEntry:
-      type: object
-      required: [stage, label, completed, status]
-      properties:
-        stage:
-          $ref: '#/components/schemas/DeployStatusEnum'
-        label:
-          type: string
-        expected_seconds:
-          type: integer
-          minimum: 0
-          nullable: true
-        completed:
-          type: boolean
-        status:
-          type: string
-          description: Stage progression indicator.
-          enum: [completed, upcoming, pending]
-        metadata:
           type: object
           nullable: true
           additionalProperties: true
     DeployTaskSummary:
       type: object
-      required:
-        - task_id
-        - status
-        - branch
-        - action
-        - started_at
+      required: [task_id, status, branch, action, started_at]
       properties:
         task_id:
           type: string
@@ -536,7 +477,6 @@ components:
           type: string
         action:
           type: string
-          description: Operation type (deploy or rollback).
         started_at:
           type: string
           format: date-time
@@ -547,11 +487,9 @@ components:
         actor:
           type: string
           nullable: true
-          description: Operator or requester associated with the task.
         timezone:
           type: string
           nullable: true
-          description: IANA timezone identifier for datetime fields.
         summary:
           type: object
           nullable: true
@@ -562,11 +500,7 @@ components:
           additionalProperties: true
     DeployTaskLogResponse:
       type: object
-      required:
-        - task_id
-        - status
-        - stages
-        - metadata
+      required: [task_id, status, stages, metadata]
       properties:
         task_id:
           type: string
@@ -589,19 +523,16 @@ components:
           additionalProperties: true
     HealthStatusResponse:
       type: object
-      required: [status, pm2_processes, mongo, issues]
+      required: [status, pm2_processes, mongo, issues, blue_green]
       properties:
         status:
           type: string
-          description: "healthy when all checks pass, otherwise degraded."
         pm2_processes:
           type: object
           additionalProperties:
             type: string
-          description: Map of PM2 process names to their states.
         mongo:
           type: string
-          description: Result of the MongoDB ping command.
         last_task_id:
           type: string
           nullable: true
@@ -628,23 +559,46 @@ components:
           type: array
           items:
             type: string
+    TimelineEntry:
+      type: object
+      required: [stage, label, status]
+      properties:
+        stage:
+          type: string
+        label:
+          type: string
+        expected_seconds:
+          type: integer
+          nullable: true
+        completed:
+          type: boolean
+          nullable: true
+        status:
+          type: string
+          enum: [completed, upcoming, pending]
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
     BlueGreenPlan:
       type: object
       required: [active_slot, next_cutover_target]
       properties:
         active_slot:
           type: string
-          description: Currently serving color (green/blue/dev-server/unknown).
         standby_slot:
           type: string
           nullable: true
-          description: Idle slot that will be served next if a cutover occurs.
         last_cutover_at:
           type: string
-          format: date-time
           nullable: true
-          description: Timestamp of the most recent completed cutover, if known.
         next_cutover_target:
           type: string
-          nullable: true
-          description: Slot targeted for the next cutover step.
+    DeployStatusEnum:
+      type: string
+      enum: [pending, running_clone, running_build, running_cutover, running_observability, completed, failed]
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string

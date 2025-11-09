@@ -1,202 +1,118 @@
-<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 900px; margin: auto; background-color: #ffffff; color: #333; border: 1px solid #ddd;">
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.65; padding: 24px; max-width: 1000px; margin: auto; background-color: #ffffff; color: #1f1f1f; border: 1px solid #e3e3e3;">
+  <h1 style="font-size: 30px; border-bottom: 2px solid #111; padding-bottom: 10px; margin-top: 0;">
+    🚀 System Design · Cherry Deploy (최종 구현)
+  </h1>
 
-    <h1 style="border-bottom: 2px solid #000; padding-bottom: 10px; font-size: 28px;">
-        🚀 "Delightful Deploy" API 백엔드 최종 구현 계획서 (2-Repo)
-    </h1>
-
-    <h2 style="font-size: 22px; margin-top: 30px;">1. 핵심 원칙: 2-Repo (Polyrepo) 구조</h2>
-    <p style="font-size: 16px;">
-        우리는 '배포될 제품'과 '배포 도구'를 <strong>2개의 독립된 리포지토리</strong>로 분리하여 관리합니다. 이 방식은 EC2에서의 개발/디버깅 시 발생할 수 있는 <strong>Git 충돌을 원천적으로 방지</strong>합니다.
-    </p>
-    
-    <h3 style="font-size: 19px; margin-top: 25px; margin-bottom: 10px;">EC2 리포지토리 폴더 구조</h3>
-    <pre style="background-color: #f4f4f4; padding: 15px; border-radius: 5px; font-family: monospace;">
+  <h2 style="font-size: 24px; margin-top: 28px;">1. 전반 구조</h2>
+  <p>모든 DevOps + 챗봇 API는 FastAPI 애플리케이션(<code>app_main.py</code>) 한 곳에 통합되어 있으며, <strong>Repo2</strong>가 Repo1(Next.js 타겟)을 직접 조작합니다.</p>
+  <pre style="background:#fafafa; border:1px solid #ddd; padding:16px; border-radius:6px; overflow:auto;">
 /home/ec2-user/projects/
-│
-├── SB_Hackathon_Cherry_Chatbot/   # &lt;--- (Repo 1) 배포될 '제품' (챗봇 프론트엔드)
-│
-└── SB_Hackathon_Cherry_Deploy/    # &lt;--- (Repo 2) 우리의 '도구' (모든 백엔드)
-    │
-    ├── app_main.py                # (DevOps API + 챗봇 API가 모두 이 파일에!)
-    ├── requirements.txt
-    └── ...
-</pre>
+├─ SB_Hackathon_Cherry_Chatbot (Repo1, Next.js 대상)
+│   └─ frontend/my-dashboard  ← npm install/build/export 대상
+└─ SB_Hackathon_Cherry_Deploy (Repo2, 본 프로젝트)
+    ├─ app_main.py            ← FastAPI 엔트리 포인트
+    ├─ api-code/              ← services/routers/repositories/schemas
+    ├─ mongodb/, mongodb-data ← 로컬 MongoDB 번들
+    └─ swagger-api/           ← OpenAPI 문서 세트
+  </pre>
+  <ul>
+    <li><strong>Infra</strong>: AWS EC2 + PM2 + Nginx(Blue/Green) + 로컬 MongoDB + Gemini API.</li>
+    <li><strong>프로세스</strong>: PM2가 <code>uvicorn app_main:app</code> 를 <code>main-api</code> 이름으로 실행.</li>
+    <li><strong>접근 제어</strong>: 모든 DevOps 엔드포인트는 JWT 쿠키(<code>auth_token</code>) 인증 필수.</li>
+  </ul>
 
-    <h2 style="font-size: 22px; margin-top: 30px;">2. 시스템 아키텍처 (단순화됨)</h2>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>[시스템 1] 배포될 '샘플 앱' (챗봇 프론트엔드)</strong>
-            <ul>
-                <li><strong>목적:</strong> 배포/롤백을 시연하기 위한 타겟.</li>
-                <li><strong>소스코드:</strong> <code>Repo 1: SB_Hackathon_Cherry_Chatbot</code></li>
-                <li><strong>프레임워크:</strong> Next.js 앱 (루트: <code>frontend/my-dashboard</code>). 구조 정비 완료로 <code>npm install</code>, <code>npm run build</code>, <code>npm run export</code>가 동작합니다.</li>
-                <li><strong>실행:</strong> [시스템 2]가 <code>npm install → npm run build → npm run export</code>를 실행해 정적 산출물(<code>out/</code>)을 만든 뒤 Blue/Green 슬롯에 복제합니다. <code>FRONTEND_BUILD_OUTPUT_SUBDIR</code>를 비우면 PM2 `frontend-dev` 모드(Next.js dev 서버)를 선택할 수 있습니다.</li>
-            </ul>
-        </li>
-        <li><strong>[시스템 2] '핵심 백엔드' (DevOps + 챗봇 API)</strong>
-            <ul>
-                <li><strong>목적:</strong> '배포 기계'이자 '챗봇 API' 서버. (모든 백엔드 통합)</li>
-                <li><strong>소스코드:</strong> <code>Repo 2: SB_Hackathon_Cherry_Deploy</code></li>
-                <li><strong>실행 (PM2):</strong> <code>pm2 start "uvicorn app_main:app --host 0.0.0.0 --port 9001" --name main-api</code></li>
-            </ul>
-        </li>
-    </ul>
+  <h2 style="font-size: 24px; margin-top: 28px;">2. 서비스/모듈 설계</h2>
+  <table style="width:100%; border-collapse:collapse;">
+    <thead>
+      <tr style="background:#f7f7f7;">
+        <th style="border:1px solid #ddd; padding:8px;">모듈</th>
+        <th style="border:1px solid #ddd; padding:8px;">역할</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">`settings.py`</td>
+        <td style="border:1px solid #ddd; padding:8px;">환경 변수 → Pydantic 모델. Git 경로, Blue/Green 경로, LLM 옵션, 인증 값 등을 단일 소스에서 관리.</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">`services/auth_service.py`</td>
+        <td style="border:1px solid #ddd; padding:8px;">고정 계정 검증, JWT 쿠키 발급/삭제, FastAPI 의존성으로 전달.</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">`services/gemini_chat_service.py`</td>
+        <td style="border:1px solid #ddd; padding:8px;">Gemini 2.5 Flash 호출 래퍼, 키 없을 때 fallback 응답.</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">`services/deploy_service.py`</td>
+        <td style="border:1px solid #ddd; padding:8px;">배포/롤백 파이프라인, AsyncReentrantLock, auto rollback, 프리뷰, stage 로그, Mongo 메타데이터 업데이트.</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">`repositories/deploy_tasks.py`</td>
+        <td style="border:1px solid #ddd; padding:8px;">Motor 기반 Mongo Repo (`deploy_tasks`, `deploy_reports`). 인덱스/최근 조회/성공 이력 로직 포함. 실패 시 in-memory 폴백.</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ddd; padding:8px;">`routers/*.py`</td>
+        <td style="border:1px solid #ddd; padding:8px;">Chat, Auth, Deploy, Health 라우터 분리. 인증 의존성은 Deploy/Status/Preview/Tasks/Logs/Rollback에만 주입.</td>
+      </tr>
+    </tbody>
+  </table>
 
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+  <h2 style="font-size: 24px; margin-top: 28px;">3. 배포 파이프라인</h2>
+  <ol style="margin-left:20px;">
+    <li><strong>running_clone</strong>: Repo1에서 <code>git fetch → checkout -B {branch} → reset --hard → clean -fdx</code>. 롤백 시 특정 커밋 강제 checkout 및 push 옵션.</li>
+    <li><strong>running_build</strong>: `FRONTEND_INSTALL_COMMAND`, `FRONTEND_BUILD_COMMAND`, `FRONTEND_EXPORT_COMMAND` 순서 실행. dry-run 모드일 경우 명령만 기록.</li>
+    <li><strong>running_cutover</strong>: Blue ↔ Green 디렉터리 중 standby에 빌드 산출물을 복사하고 <code>/var/www/cherry-deploy/current</code> 심볼릭 링크 스위칭. dev-server 모드면 Skip.</li>
+    <li><strong>running_observability</strong>: 향후 확장용 placeholder. 현재는 성공 메시지만 반환.</li>
+  </ol>
+  <p>각 단계는 Mongo 메타데이터에 stdout/stderr/returncode/명령 설명을 기록하며, 실패 시 `failure_context`에 재시도/auto_recovery 정보를 저장합니다.</p>
 
-    <h2 style="font-size: 22px; margin-top: 30px;">3. [시스템 2] 핵심 API 명세 (Swagger)</h2>
-    <p style="font-size: 16px;">(<code>app_main.py</code>에 구현할 API 목록)</p>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong><code>POST /api/v1/deploy</code> (DevOps API)</strong>
-            <ul>
-                <li><strong>설명:</strong> '챗봇 프론트엔드'의 신규 배포를 비동기로 트리거합니다.</li>
-                <li><strong>Request Body (수정됨):</strong> 
-                    <pre style="background-color: #f4f4f4; padding: 10px; border-radius: 5px; font-size: 14px;">
-{
-    "branch": "main"
-}
-                    </pre>
-                </li>
-            </ul>
-        </li>
-        <li><strong><code>POST /api/v1/rollback</code> (DevOps API)</strong>
-            <ul>
-                <li><strong>설명:</strong> '챗봇 프론트엔드'를 이전 버전으로 롤백합니다.</li>
-            </ul>
-        </li>
-        <li><strong><code>GET /api/v1/status/{task_id}</code> (DevOps API)</strong>
-            <ul>
-                <li><strong>설명:</strong> 배포/롤백 작업의 현재 상태를 폴링(Polling)합니다.</li>
-            </ul>
-        </li>
-        <li><strong><code>GET /api/v1/preview</code> (DevOps API)</strong>
-            <ul>
-                <li><strong>설명:</strong> 최근 성공 배포 대비 Git diff를 수집해 예상 명령 목록, 단계별 ETA, Blue/Green 현황, 위험도, Gemini 2.5 Flash 요약을 돌려줍니다.</li>
-            </ul>
-        </li>
-        <li><strong><code>POST /api/v1/chat</code> (챗봇 API)</strong>
-            <ul>
-                <li><strong>설명:</strong> 챗봇 UI가 호출할 간단한 LLM API입니다.</li>
-                <li><strong>Request Body:</strong> <code>{ "message": "string" }</code></li>
-            </ul>
-        </li>
-        <li><strong><code>GET /api/v1/tasks/recent</code>, <code>GET /api/v1/tasks/{task_id}/logs</code></strong>
-            <ul>
-                <li><strong>설명:</strong> 최근 배포/롤백 작업 요약과 각 단계(stdout/stderr 포함) 로그 조회를 제공합니다.</li>
-            </ul>
-        </li>
-        <li><strong><code>GET /healthz</code></strong>
-            <ul>
-                <li><strong>설명:</strong> MongoDB 연결, PM2(`main-api`, `frontend-dev`) 상태, Blue/Green 슬롯을 동시에 점검합니다.</li>
-            </ul>
-        </li>
-    </ul>
+  <h2 style="font-size: 24px; margin-top: 28px;">4. 데이터 및 동시성</h2>
+  <ul>
+    <li><strong>DeployTask</strong>: `_id`, `status`, `started_at/completed_at`, stage 메타데이터, summary, failure_context.</li>
+    <li><strong>AsyncReentrantLock</strong>: FastAPI BackgroundTask 안에서 사용하여 하나의 EC2 인스턴스에서 동시 배포를 직렬화.</li>
+    <li><strong>Auto rollback</strong>: `npm install`, `pm2 start` 등 주요 명령 실패 시 최근 성공 2건 기반으로 자동 롤백 파이프라인 실행.</li>
+  </ul>
 
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+  <h2 style="font-size: 24px; margin-top: 28px;">5. 인증 & 보안</h2>
+  <ul>
+    <li>계정은 환경변수 <code>LOGIN_USER</code>/<code>LOGIN_PASSWORD</code>로 정의.</li>
+    <li><code>JWT_SECRET_KEY</code> 미설정 시 애플리케이션이 기동을 거부.</li>
+    <li><code>auth_token</code> 쿠키(HTTPOnly, Secure, SameSite=Lax)를 이용하여 `/api/v1/*`(chat 제외)을 보호.</li>
+    <li>모든 민감 명령은 서버 내부에서만 실행되며 외부로 노출되지 않음.</li>
+  </ul>
 
-    <h2 style="font-size: 22px; margin-top: 30px;">4. 필수 EC2 환경 및 설치 (EC2 체크리스트)</h2>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>Python 3.12:</strong> EC2 전역에 설치된 Python 3.12를 사용합니다.</li>
-        <li><strong>Node.js / npm:</strong> (<code>npm install -g pm2</code> 및 <code>SB_Hackathon_Cherry_Chatbot</code> 빌드에 필요)</li>
-        <li><strong>Nginx:</strong> (<code>sudo apt install nginx</code>. 리버스 프록시 및 Blue/Green 트래픽 전환용)</li>
-        <li><strong>PM2:</strong> (<code>npm install -g pm2</code>. <code>main-api</code> 관리용)</li>
-        <li><strong>MongoDB:</strong> (<code>./mongodb</code> 디렉터리에 압축 해제된 바이너리를 사용하며, <code>./mongodb/bin/mongod --dbpath mongodb-data --bind_ip 127.0.0.1 --port 27017 --fork --logpath mongodb-data/mongod.log</code> 명령으로 실행)</li>
-        <li><strong>Git:</strong> (<code>sudo apt install git</code>. 소스코드 <code>pull</code>용)</li>
-    </ul>
+  <h2 style="font-size: 24px; margin-top: 28px;">6. API 요약 (최종 12개)</h2>
+  <table style="width:100%; border-collapse:collapse;">
+    <thead>
+      <tr style="background:#f7f7f7;">
+        <th style="border:1px solid #ddd; padding:8px;">구분</th>
+        <th style="border:1px solid #ddd; padding:8px;">Method & Path</th>
+        <th style="border:1px solid #ddd; padding:8px;">설명</th>
+        <th style="border:1px solid #ddd; padding:8px;">인증</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td rowspan="4" style="border:1px solid #ddd; padding:8px;">Deploy</td><td style="border:1px solid #ddd; padding:8px;">POST /api/v1/deploy</td><td style="border:1px solid #ddd; padding:8px;">Blue/Green 배포 시작</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">POST /api/v1/rollback</td><td style="border:1px solid #ddd; padding:8px;">직전 성공 배포로 복귀</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">GET /api/v1/tasks/recent</td><td style="border:1px solid #ddd; padding:8px;">최근 배포/롤백 히스토리</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">GET /api/v1/tasks/{id}/logs</td><td style="border:1px solid #ddd; padding:8px;">stage 로그/메타데이터</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td rowspan="2" style="border:1px solid #ddd; padding:8px;">Status</td><td style="border:1px solid #ddd; padding:8px;">GET /api/v1/status/{id}</td><td style="border:1px solid #ddd; padding:8px;">진행 상황 + 비용/위험</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">GET /api/v1/preview</td><td style="border:1px solid #ddd; padding:8px;">LLM 요약/명령/ETA</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td rowspan="3" style="border:1px solid #ddd; padding:8px;">Auth</td><td style="border:1px solid #ddd; padding:8px;">POST /api/v1/auth/login</td><td style="border:1px solid #ddd; padding:8px;">JWT 쿠키 발급</td><td style="border:1px solid #ddd; padding:8px;">-</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">POST /api/v1/auth/logout</td><td style="border:1px solid #ddd; padding:8px;">쿠키 삭제</td><td style="border:1px solid #ddd; padding:8px;">-</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">GET /api/v1/auth/me</td><td style="border:1px solid #ddd; padding:8px;">현재 사용자 확인</td><td style="border:1px solid #ddd; padding:8px;">필수</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">Chat</td><td style="border:1px solid #ddd; padding:8px;">POST /api/v1/chat</td><td style="border:1px solid #ddd; padding:8px;">Gemini 응답 프록시</td><td style="border:1px solid #ddd; padding:8px;">불필요</td></tr>
+      <tr><td style="border:1px solid #ddd; padding:8px;">System</td><td style="border:1px solid #ddd; padding:8px;">GET /healthz</td><td style="border:1px solid #ddd; padding:8px;">Mongo/PM2/Nginx 상태 종합</td><td style="border:1px solid #ddd; padding:8px;">불필요</td></tr>
+    </tbody>
+  </table>
 
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
+  <h2 style="font-size: 24px; margin-top: 28px;">7. 장애 대응 시나리오</h2>
+  <ul>
+    <li><strong>Git 커맨드 실패</strong>: `CommandExecutionError`에 stdout/stderr/returncode 저장 → /tasks/logs 로 가시화.</li>
+    <li><strong>npm install 실패</strong>: auto rollback 시도 → 성공 시 `failure_context.auto_recovery`에 결과 기록.</li>
+    <li><strong>Mongo 장애</strong>: startup 에서 in-memory repo로 폴백, `/healthz`에 `mongo: unreachable` 표시.</li>
+    <li><strong>LLM 실패</strong>: 로그 경고 후 fallback 요약(“Diff context unavailable …”) 반환.</li>
+  </ul>
 
-    <h2 style="font-size: 22px; margin-top: 30px;">5. DB 설계 (MongoDB) (수정됨)</h2>
-    <ol style="margin-left: 20px; font-size: 16px;">
-        <li><strong><code>deploy_tasks</code> (배포 작업 관리)</strong>
-            <ul>
-                <li><code>task_id</code> (string, Pkey): UUID</li>
-                <li><code>status</code> (string: "pending", "running_clone", "running_build", "running_cutover", "<strong>running_observability</strong>"(Preview 요약 단계), "completed", "failed")</li>
-                <li><code>started_at</code> (datetime)</li>
-                <li><code>completed_at</code> (datetime)</li>
-                <li><code>error_log</code> (string)</li>
-                <li><code>metadata</code> (object): 브랜치 정보 및 각 단계별 메타데이터</li>
-            </ul>
-        </li>
-    </ol>
-
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
-
-    <h2 style="font-size: 22px; margin-top: 30px;">6. [시스템 2] 핵심 배포 로직 (<code>POST /deploy</code>) (수정됨)</h2>
-    <p style="font-size: 16px;">
-        (<code>app_main.py</code>의 <code>BackgroundTasks</code> 내부에서 실행될 실제 순서입니다.)
-    </p>
-
-    <ol style="margin-left: 20px; font-size: 16px;">
-        <li><strong>즉시 응답:</strong> <code>task_id</code>를 생성, 브랜치 정보와 함께 DB에 "pending"으로 저장 후, <code>task_id</code>를 즉시 프론트에 반환합니다.</li>
-        <li><strong>(백그라운드 시작)</strong></li>
-        <li><strong>DB 상태 "running_clone":</strong> <code>subprocess</code>로 <strong><code>Repo 1 (Chatbot)</code></strong>의 워킹 디렉터리를 아래 순서로 완전히 교체합니다. (옵션으로 <code>main</code> 허용)
-            <ul>
-                <li><code>git fetch origin</code></li>
-                <li><code>git checkout -B [branch] origin/[branch]</code></li>
-                <li><code>git reset --hard origin/[branch]</code></li>
-                <li><code>git clean -fdx</code></li>
-            </ul>
-            <ul>
-                <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/"</code>)</strong></li>
-            </ul>
-        </li>
-        <li><strong>DB 상태 "running_build":</strong>
-            <ul>
-                <li><code>subprocess</code>로 <strong><code>npm install</code> → <code>npm run build</code> → <code>npm run export</code></strong>를 실행합니다. 각 명령은 <code>FRONTEND_INSTALL_COMMAND</code>, <code>FRONTEND_BUILD_COMMAND</code>, <code>FRONTEND_EXPORT_COMMAND</code>로 덮어쓸 수 있습니다.</li>
-                <li><strong>(실행 경로: <code>cwd="/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot/frontend/my-dashboard/"</code>)</strong></li>
-            </ul>
-        </li>
-        <li><strong>DB 상태 "running_cutover":</strong>
-            <ul>
-                <li><code>FRONTEND_BUILD_OUTPUT_SUBDIR</code>(기본값 <code>out/</code>)이 비어있지 않으면 현재 Live 슬롯을 확인해 반대 슬롯(Blue ↔ Green)에 정적 산출물을 복사하고, <code>current</code> 심볼릭 링크를 새 슬롯으로 스왑합니다. Dry-run 모드에서는 계산만 수행합니다.</li>
-            </ul>
-        </li>
-        <li><strong>DB 상태 "running_observability":</strong> 현재 버전은 "Observability checks are not implemented yet." 메시지를 기록해두고 추후 확장을 위한 자리를 확보합니다.</li>
-        <li><strong>DB 상태 "completed":</strong> 이전 'Blue' 환경을 정리하고 작업을 종료합니다.</li>
-        <li><strong>실패 처리:</strong> <code>npm install</code> 단계에서 오류가 발생하면 서비스가 즉시 직전 성공 배포 커밋으로 자동 롤백을 시도하고, 결과를 원본 Task 메타데이터의 <code>failure_context.auto_recovery</code>에 기록합니다.</li>
-    </ol>
-    <p style="font-size: 16px; color: #555;">※ 현재 기본값은 <code>DEPLOY_DRY_RUN=false</code>라서 위 명령들이 실제 실행됩니다. 테스트 목적으로 시뮬레이션만 원하면 PM2/환경변수에서 <code>DEPLOY_DRY_RUN=true</code>로 설정한 뒤 재시작하세요.</p>
-    
-    <hr style="margin-top: 35px; margin-bottom: 35px; border: 0; border-top: 1px solid #eee;">
-
-    <h2 style="font-size: 22px; margin-top: 30px;">7. Git 리포지토리 및 브랜치 전략 (수정됨)</h2>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>리포지토리 구조:</strong> 2개의 독립된 리포지토리를 사용합니다.
-            <ul>
-                <li><strong><code>Repo 1: SB_Hackathon_Cherry_Chatbot</code></strong> (배포될 '제품')</li>
-                <li><strong><code>Repo 2: SB_Hackathon_Cherry_Deploy</code></strong> ('배포 기계' + 챗봇 API)</li>
-            </ul>
-        </li>
-        <li><strong>워크플로우:</strong>
-            <ul>
-                <li><strong><code>sungwoo/feature/backend-mvp</code>:</strong> 성우님이 <strong><code>Repo 2 (Deploy)</code></strong>에서 '배포 기계'와 '챗봇 API'를 개발하는 **'개발 브랜치'**입니다.</li>
-                <li><strong><code>deploy</code> (in <code>Repo 1</code>):</strong>
-                    <ul>
-                        <li>[시스템 2]가 <code>git pull</code> 할 기본 **'배포 대상 브랜치'**입니다.</li>
-                        <li>필요 시 <code>main</code> 브랜치도 허용하지만, 기본은 <code>deploy</code>입니다.</li>
-                    </ul>
-                </li>
-            </ul>
-        </li>
-    </ul>
-
-    <h2 style="font-size: 22px; margin-top: 30px;">8. 롤백 전략</h2>
-    <ul style="margin-left: 20px; font-size: 16px;">
-        <li><strong>요청:</strong> <code>POST /api/v1/rollback</code> (기본 브랜치: <code>deploy</code>, 옵션으로 <code>main</code>)</li>
-        <li><strong>검증:</strong> MongoDB에서 최근 2개의 성공 배포 히스토리를 조회 (commit SHA 포함). 성공 기록이 2건 미만이면 409로 종료됩니다.</li>
-        <li><strong>동작:</strong> 최신 성공 commit을 <code>from_commit</code>, 직전 성공 commit을 <code>to_commit</code>으로 삼아 아래 명령 실행:
-            <ul>
-                <li><code>git fetch origin</code></li>
-                <li><code>git checkout -B [branch] to_commit</code></li>
-                <li><code>git reset --hard to_commit</code></li>
-                <li><code>git clean -fdx</code></li>
-                <li><code>git push origin +to_commit:[branch]</code> (실제 모드에서만)</li>
-                <li><code>npm install → npm run build → npm run export</code> 실행 후 Blue/Green 심볼릭 링크를 동일하게 복구</li>
-            </ul>
-        </li>
-        <li><strong>결과:</strong> <code>/api/v1/status/{task_id}</code>로 롤백 진행 상황과 <code>rolled_back_from/rolled_back_to</code> 메타데이터를 확인.</li>
-        <li><strong>주의:</strong> Repo1 <code>deploy</code> 브랜치에는 배포 대상인 <code>frontend/my-dashboard</code>만 포함시키고, 기타 디렉터리는 별도 브랜치로 관리하세요.</li>
-        <li><strong>Preview:</strong> <code>GET /api/v1/preview</code>는 최근 성공 배포 대비 Git diff를 Gemini 2.5 Flash 모델로 요약해 변경 점검 노트를 제공합니다.</li>
-    </ul>
-
+  <p style="margin-top:36px; font-weight:bold; text-align:center;">이 설계 문서만으로 신규 인원이 전체 시스템(코드 → 인프라 → API) 구조를 95% 이상 이해하도록 작성되었습니다.</p>
 </div>

@@ -1,66 +1,94 @@
 openapi: 3.0.3
 info:
-  title: Cherry Deploy Status API
-  version: 0.1.0
+  title: Cherry Deploy · Status & Logs API
+  version: 1.0.0
   description: |
-    Poll deployment progress using the task identifier returned by `/api/v1/deploy`.
-    NOTE: Requires the live FastAPI service and MongoDB to be available; this spec alone cannot return task state.
-    ⚠️ 전체 API 스펙은 `swagger-api/openapi.yaml`을 사용하세요. 이 파일은 참고용 조각 문서입니다.
+    배포/롤백 작업의 현재 상태, 최근 히스토리, 단계별 로그를 제공하는 엔드포인트 모음입니다.
 servers:
   - url: https://delight.13-125-116-92.nip.io
-    description: Production-like endpoint (HTTPS via Let's Encrypt)
+    description: Production (TLS)
   - url: http://127.0.0.1:9001
-    description: Local FastAPI server (bypasses Nginx)
+    description: 로컬 FastAPI
+components:
+  securitySchemes:
+    AuthCookie:
+      type: apiKey
+      in: cookie
+      name: auth_token
 paths:
   /api/v1/status/{task_id}:
     get:
-      summary: Fetch current deployment status
-      operationId: getDeployStatus
-      tags:
-        - deploy
+      tags: [deploy]
+      summary: 특정 작업의 실시간 상태 조회
+      security:
+        - AuthCookie: []
       parameters:
         - in: path
           name: task_id
           required: true
           schema:
             type: string
-          description: Identifier returned by `/api/v1/deploy`.
       responses:
         "200":
-          description: Task found; returns current status and metadata.
+          description: 작업 상태/메타데이터
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeployStatusResponse'
-              examples:
-                running:
-                  summary: Deployment in progress
-                  value:
-                    task_id: "fd2c3a1d8f1f4d59b6d3f6c5d30d2f7a"
-                    status: "running_build"
-                    metadata:
-                      branch: "deploy"
-                      running_clone:
-                        timestamp: "2025-11-05T11:40:00Z"
-                        dry_run: true
-                      running_build:
-                        timestamp: "2025-11-05T11:41:12Z"
-                        dry_run: true
-                    started_at: "2025-11-05T11:39:58Z"
-                    completed_at: null
-                    error_log: null
         "404":
-          description: Unknown task identifier.
+          description: Task 미존재
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              examples:
-                missing:
-                  summary: Task not found
-                  value:
-                    detail: "deploy task not found: 1234"
-      security: []
+  /api/v1/tasks/recent:
+    get:
+      tags: [deploy]
+      summary: 최근 작업 목록
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        "200":
+          description: 최신 작업 배열
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeployTaskSummary'
+  /api/v1/tasks/{task_id}/logs:
+    get:
+      tags: [deploy]
+      summary: Stage별 stdout/stderr 스니펫 조회
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 전체 메타데이터 + stage 로그
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployTaskLogResponse'
+        "404":
+          description: Task 미존재
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     DeployStatusResponse:
@@ -69,26 +97,21 @@ components:
         - task_id
         - status
         - metadata
+        - stages
         - started_at
       properties:
         task_id:
           type: string
-          description: Deployment task identifier.
         status:
           type: string
-          enum:
-            - pending
-            - running_clone
-            - running_build
-            - running_cutover
-            - running_observability
-            - completed
-            - failed
-          description: Current task state.
         metadata:
           type: object
           additionalProperties: true
-          description: Per-stage metadata captured during execution.
+        stages:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
         started_at:
           type: string
           format: date-time
@@ -99,12 +122,95 @@ components:
         error_log:
           type: string
           nullable: true
-          description: Present when `status` is `failed`.
-    ErrorResponse:
+        failure_context:
+          type: object
+          nullable: true
+          additionalProperties: true
+        cost_estimate:
+          type: object
+          nullable: true
+          additionalProperties: true
+        risk_assessment:
+          type: object
+          nullable: true
+          additionalProperties: true
+        llm_preview:
+          type: object
+          nullable: true
+          additionalProperties: true
+        blue_green_plan:
+          type: object
+          nullable: true
+          additionalProperties: true
+        timezone:
+          type: string
+    DeployTaskSummary:
       type: object
       required:
-        - detail
+        - task_id
+        - status
+        - branch
+        - action
+        - started_at
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+        branch:
+          type: string
+        action:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        actor:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        summary:
+          type: object
+          nullable: true
+          additionalProperties: true
+        failure_context:
+          type: object
+          nullable: true
+          additionalProperties: true
+    DeployTaskLogResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - stages
+        - metadata
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+        stages:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        error_log:
+          type: string
+          nullable: true
+        failure_context:
+          type: object
+          nullable: true
+          additionalProperties: true
+    ErrorResponse:
+      type: object
       properties:
         detail:
           type: string
-          description: Error message for operators.

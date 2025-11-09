@@ -1,53 +1,47 @@
 openapi: 3.0.3
 info:
-  title: Cherry Deploy Preview API
-  version: 0.1.0
+  title: Cherry Deploy · Preview API
+  version: 1.0.0
   description: |
-    Provide a high-level overview of the deployment pipeline steps, risks, and rough cost. Useful for a
-    pre-flight check before triggering `/api/v1/deploy`.
-    NOTE: This is a static preview derived from backend configuration; it does not execute commands.
-    ⚠️ 전체 API 스펙은 `swagger-api/openapi.yaml`을 사용하세요. 이 파일은 참고용 조각 문서입니다.
+    배포 전에 실행될 명령, 단계별 ETA, 비용/위험, LLM 요약, Blue/Green 상태를 미리 제공합니다.
 servers:
   - url: https://delight.13-125-116-92.nip.io
-    description: Production-like endpoint (HTTPS via Let's Encrypt)
+    description: Production (Nginx)
   - url: http://127.0.0.1:9001
-    description: Local FastAPI server (bypasses Nginx)
+    description: 로컬 FastAPI
+components:
+  securitySchemes:
+    AuthCookie:
+      type: apiKey
+      in: cookie
+      name: auth_token
 paths:
   /api/v1/preview:
     get:
-      summary: Describe the upcoming deploy steps, risks, and costs
-      operationId: previewDeploy
-      tags:
-        - deploy
+      tags: [deploy]
+      summary: 다음 배포 시나리오 프리뷰
+      description: Git diff(로컬 또는 GitHub Compare) + Gemini 2.5 Flash를 활용해 리스크를 요약합니다.
+      security:
+        - AuthCookie: []
+      parameters:
+        - in: query
+          name: task_id
+          schema:
+            type: string
+          description: 특정 task에 맞춰 프리뷰를 정렬하고 싶을 때 사용.
       responses:
         "200":
-          description: Static preview payload showing operational context.
+          description: 프리뷰 페이로드
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeployPreviewResponse'
-              examples:
-                preview:
-                  summary: Typical response
-                  value:
-                    current_branch: "deploy"
-                    target_repo: "/home/ec2-user/projects/SB_Hackathon_Cherry_Chatbot"
-                    commands:
-                      - "git fetch origin"
-                      - "git checkout -B deploy origin/deploy"
-                      - "git reset --hard origin/deploy"
-                      - "git clean -fdx"
-                      - "npm run build"
-                      - "sync static assets to nginx green path"
-                    risk_assessment:
-                      downtime: "Minimal (blue/green swap)"
-                      rollback: "Sym-link revert to previous blue directory"
-                      observability: "Manual Lighthouse check pending automation"
-                    cost_estimate:
-                      runtime_minutes: 8
-                      npm_dependencies: "No extra cost"
-                      lighthouse_tokens: "N/A"
-      security: []
+        "404":
+          description: task_id와 일치하는 작업을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     DeployPreviewResponse:
@@ -58,36 +52,88 @@ components:
         - commands
         - risk_assessment
         - cost_estimate
+        - llm_preview
+        - timeline_preview
+        - warnings
+        - blue_green_plan
+        - diff_source
+        - diff_stats
       properties:
         current_branch:
           type: string
-          description: Default branch targeted for deploy operations.
         target_repo:
           type: string
-          description: Filesystem path of the frontend repository.
         frontend_project_path:
           type: string
-          description: Absolute path to the frontend project used for builds.
           nullable: true
         frontend_output_path:
           type: string
-          description: Build artifact directory (absent for dev-server mode).
           nullable: true
         commands:
           type: array
           items:
             type: string
-          description: Ordered commands executed during deploy.
         risk_assessment:
           type: object
           additionalProperties: true
-          description: Plain-language risk summary.
         cost_estimate:
           type: object
           additionalProperties: true
-          description: Rough execution cost/time details.
         llm_preview:
           type: object
           additionalProperties: true
+        timeline_preview:
+          type: array
+          items:
+            type: object
+            properties:
+              stage:
+                type: string
+              label:
+                type: string
+              expected_seconds:
+                type: integer
+              completed:
+                type: boolean
+              status:
+                type: string
+                enum: [completed, upcoming, pending]
+              metadata:
+                type: object
+                additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: string
+        task_context:
+          type: object
           nullable: true
-          description: Gemini-generated summary of upcoming deploy changes (includes status, diff snippet, and response text).
+          additionalProperties: true
+        blue_green_plan:
+          type: object
+          properties:
+            active_slot:
+              type: string
+            standby_slot:
+              type: string
+              nullable: true
+            last_cutover_at:
+              type: string
+              nullable: true
+            next_cutover_target:
+              type: string
+        diff_source:
+          type: string
+          enum: [working_tree, github_compare]
+        diff_stats:
+          type: object
+          additionalProperties: true
+        compare_metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
